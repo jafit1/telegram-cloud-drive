@@ -1,0 +1,23 @@
+{
+  "name": "telegram-cloud-drive",
+  "version": "1.0.0",
+  "description": "Unlimited Cloud Drive using private Telegram group as backend storage",
+  "main": "server.js",
+  "scripts": {
+    "start": "node --localstorage-file=gramjs-localstorage.json server.js",
+    "build": "echo 'Sharp native module will be installed by Nixpacks automatically'"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "multer": "^1.4.5-lts.1",
+    "sharp": "^0.33.5",
+    "telegram": "^2.26.15"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "author": "Antigravity",
+  "license": "MIT"
+}
+

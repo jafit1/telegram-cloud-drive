@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="id" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Drive - Telegram Cloud Storage</title>
+  <meta name="description" content="Unlimited cloud drive powered by Telegram. Fast, secure, free.">
+  
+  <!-- Google Fonts: Inter & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+  
+  <!-- Tailwind CSS Play CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            primary: '#E5A50A',
+            secondary: '#000000',
+            accent: '#FBC336',
+            bgLight: '#F5F5F3',
+            surface: '#191C21',
+            textDark: '#111827',
+            textGray: '#4B5563',
+            borderDark: '#4A4A4A',
+          },
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+          borderRadius: {
+            card: '16px',
+            control: '8px',
+          }
+        }
+      }
+    }
+  </script>
+  
+  <style type="text/css">
+    /* Subtle animations and scrollbar tweaks */
+    .custom-scrollbar::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+      background: rgba(74, 74, 74, 0.4);
+      border-radius: 9999px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+      background: rgba(229, 165, 10, 0.6);
+    }
+    .dragover {
+      border-color: #E5A50A !important;
+      background-color: rgba(229, 165, 10, 0.05) !important;
+    }
+    .transition-bento {
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+  </style>
+</head>
+<body class="bg-bgLight dark:bg-black text-textDark dark:text-bgLight font-sans transition-colors duration-300 min-h-screen">
+
+  <!-- Setup Wizard -->
+  <div id="setup-wizard" class="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-surface border border-borderDark/40 rounded-card w-full max-w-md p-8 text-white shadow-2xl relative">
+      <div class="flex flex-col items-center mb-8">
+        <div class="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mb-4 border border-primary/20">
+          <svg viewBox="0 0 100 100" class="w-10 h-10">
+            <polygon points="30,85 70,85 90,52 50,52" fill="#E5A50A"/>
+            <polygon points="50,15 90,52 50,52 30,17" fill="#FBC336"/>
+            <polygon points="50,15 30,17 30,85 50,52" fill="#FFFFFF"/>
+          </svg>
+        </div>
+        <h1 class="text-2xl font-bold tracking-tight font-sans">Cloud Drive Setup</h1>
+        <p class="text-xs text-textGray font-mono mt-1 uppercase tracking-wider">[ ACCELERATING DIGITAL GROWTH ]</p>
+        <p class="text-center text-sm text-textGray mt-3">Hubungkan akun Telegram Anda untuk penyimpanan langsung 2GB tanpa pemotongan.</p>
+      </div>
+
+      <!-- Step 1 Form: Request OTP -->
+      <form id="setup-form-step1" class="space-y-5">
+        <div class="space-y-2">
+          <label for="phone-number" class="block text-xs font-semibold text-textGray uppercase tracking-wider font-mono">Nomor Telepon Telegram</label>
+          <input type="text" id="phone-number" value="+62" placeholder="Contoh: +628123456789" class="w-full bg-black/40 border border-borderDark/60 rounded-control focus:border-primary text-white text-sm outline-none px-4 py-2.5 transition" required autocomplete="off">
+          <span class="block text-xs text-textGray/70">Gunakan kode negara (misal +62 untuk Indonesia).</span>
+        </div>
+        
+        <details class="adv-details group border-t border-borderDark/20 pt-4">
+          <summary class="list-none flex items-center justify-between text-xs font-semibold text-primary cursor-pointer outline-none select-none">
+            <span>Pengaturan Lanjutan (API ID & Hash Kustom)</span>
+            <svg class="w-4 h-4 transform group-open:rotate-180 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+          </summary>
+          <div class="space-y-4 mt-4">
+            <div class="space-y-2">
+              <label for="api-id" class="block text-xs text-textGray font-mono">API ID (Opsional)</label>
+              <input type="text" id="api-id" placeholder="Biarkan kosong untuk otomatis" class="w-full bg-black/40 border border-borderDark/60 rounded-control focus:border-primary text-white text-sm outline-none px-4 py-2 transition" autocomplete="off">
+              <span class="block text-xs text-textGray/50">Dapatkan di <a href="https://my.telegram.org" target="_blank" class="underline hover:text-primary">my.telegram.org</a></span>
+            </div>
+            <div class="space-y-2">
+              <label for="api-hash" class="block text-xs text-textGray font-mono">API Hash (Opsional)</label>
+              <input type="text" id="api-hash" placeholder="Biarkan kosong untuk otomatis" class="w-full bg-black/40 border border-borderDark/60 rounded-control focus:border-primary text-white text-sm outline-none px-4 py-2 transition" autocomplete="off">
+            </div>
+          </div>
+        </details>
+
+        <div id="step1-error" class="hidden text-xs bg-red-950/40 border border-red-500/50 text-red-200 px-4 py-3 rounded-control"></div>
+        <button type="submit" id="btn-send-otp" class="w-full bg-primary hover:bg-accent text-black font-semibold text-sm rounded-control transition-all duration-300 py-3 flex items-center justify-center gap-2">
+          <span>Kirim Kode OTP</span>
+          <div class="spin hidden w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin"></div>
+        </button>
+      </form>
+
+      <!-- Step 2 Form: Verify OTP + Sign In (Initially Hidden) -->
+      <form id="setup-form-step2" class="hidden space-y-5">
+        <div class="space-y-2">
+          <label for="otp-code" class="block text-xs font-semibold text-textGray uppercase tracking-wider font-mono">Kode OTP Telegram</label>
+          <input type="text" id="otp-code" placeholder="Masukkan 5 digit kode" class="w-full bg-black/40 border border-borderDark/60 rounded-control focus:border-primary text-white text-sm outline-none px-4 py-2.5 transition" required autocomplete="off">
+          <span class="block text-xs text-textGray/70">Kode dikirim ke aplikasi Telegram Anda.</span>
+        </div>
+        <div class="field hidden space-y-2" id="field-2fa">
+          <label for="password-2fa" class="block text-xs font-semibold text-textGray uppercase tracking-wider font-mono">Password 2FA (Diperlukan)</label>
+          <input type="password" id="password-2fa" placeholder="Masukkan password Verifikasi 2 Langkah" class="w-full bg-black/40 border border-borderDark/60 rounded-control focus:border-primary text-white text-sm outline-none px-4 py-2.5 transition" autocomplete="off">
+          <span class="block text-xs text-textGray/70">Akun Anda dilindungi Verifikasi 2 Langkah. Silakan masukkan password Anda.</span>
+        </div>
+        <div id="step2-error" class="hidden text-xs bg-red-950/40 border border-red-500/50 text-red-200 px-4 py-3 rounded-control"></div>
+        <div class="flex gap-4">
+          <button type="button" id="btn-back-step1" class="w-1/3 border border-white/20 hover:border-white text-white font-medium text-sm rounded-control transition py-2.5">Kembali</button>
+          <button type="submit" id="btn-verify-otp" class="w-2/3 bg-primary hover:bg-accent text-black font-semibold text-sm rounded-control transition py-2.5 flex items-center justify-center gap-2">
+            <span>Masuk</span>
+            <div class="spin hidden w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin"></div>
+          </button>
+        </div>
+      </form>
+
+      <!-- Step 3 Form: Storage Config (Initially Hidden) -->
+      <form id="setup-form-step3" class="hidden space-y-5">
+        <div class="space-y-2">
+          <label for="storage-chat-id" class="block text-xs font-semibold text-textGray uppercase tracking-wider font-mono">Storage Chat ID (Group/Channel)</label>
+          <input type="text" id="storage-chat-id" placeholder="Contoh: -1001234567890" class="w-full bg-black/40 border border-borderDark/60 rounded-control focus:border-primary text-white text-sm outline-none px-4 py-2.5 transition" required autocomplete="off">
+          <span class="block text-xs text-textGray/70">ID group atau channel tujuan penyimpanan. Akun Anda harus bergabung ke dalamnya.</span>
+        </div>
+        <div id="step3-error" class="hidden text-xs bg-red-950/40 border border-red-500/50 text-red-200 px-4 py-3 rounded-control"></div>
+        <button type="submit" id="btn-save-storage" class="w-full bg-primary hover:bg-accent text-black font-semibold text-sm rounded-control transition-all duration-300 py-3 flex items-center justify-center gap-2">
+          <span>Simpan & Masuk ke Drive</span>
+          <div class="spin hidden w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin"></div>
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- App Shell -->
+  <div id="app-dashboard" class="max-w-7xl mx-auto p-4 md:p-8 flex flex-col gap-6 hidden">
+    <!-- Header Bento Card -->
+    <header class="bg-white dark:bg-surface border border-borderDark/10 dark:border-borderDark/40 p-6 rounded-card flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm transition-bento">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center border border-primary/20">
+          <svg viewBox="0 0 100 100" class="w-6 h-6">
+            <polygon points="30,85 70,85 90,52 50,52" fill="#E5A50A"/>
+            <polygon points="50,15 90,52 50,52 30,17" fill="#FBC336"/>
+            <polygon points="50,15 30,17 30,85 50,52" fill="#FFFFFF"/>
+          </svg>
+        </div>
+        <div>
+          <h1 class="text-xl font-bold tracking-tight">Accelerating Digital Growth</h1>
+          <p class="text-[10px] text-textGray font-mono uppercase tracking-wider">[ CLOUD STORAGE PLATFORM ]</p>
+        </div>
+      </div>
+      
+      <div class="flex items-center gap-4">
+        <!-- Connection Dot Capsule -->
+        <div class="flex items-center gap-2 bg-neutral-100 dark:bg-black/40 border border-neutral-200 dark:border-borderDark/40 px-3.5 py-1.5 rounded-full" id="conn-dot">
+          <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse dot"></span>
+          <span class="text-xs font-mono font-semibold tracking-wider text-textGray dark:text-neutral-400">TELEGRAM OK</span>
+        </div>
+
+        <button id="btn-theme" class="w-9 h-9 rounded-control flex items-center justify-center border border-neutral-200 dark:border-borderDark/40 bg-neutral-50 dark:bg-black/20 hover:bg-neutral-100 dark:hover:bg-black/50 transition text-textDark dark:text-white" title="Ubah Tema">
+          <svg id="ic-sun" class="w-5 h-5 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+          <svg id="ic-moon" class="w-5 h-5 text-neutral-400 hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        </button>
+
+        <button id="btn-settings" class="w-9 h-9 rounded-control flex items-center justify-center border border-neutral-200 dark:border-borderDark/40 bg-neutral-50 dark:bg-black/20 hover:bg-neutral-100 dark:hover:bg-black/50 transition text-textDark dark:text-white" title="Pengaturan">
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Bento Grid Dashboard -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      
+      <!-- Card A: Stats & Connection -->
+      <div class="bg-surface text-white p-6 rounded-card border border-borderDark/40 flex flex-col justify-between min-h-[200px] shadow-lg relative overflow-hidden transition-bento hover:scale-[1.01]">
+        <div class="space-y-1">
+          <span class="block text-[10px] font-mono font-semibold text-primary uppercase tracking-wider">[ METRICS & OVERVIEW ]</span>
+          <h2 class="text-lg font-bold tracking-tight">Kapasitas Penyimpanan</h2>
+        </div>
+        
+        <div class="space-y-2 my-4">
+          <div class="w-full bg-black/40 rounded-full h-2 overflow-hidden border border-borderDark/20">
+            <div id="storage-fill" class="bg-primary h-full rounded-full transition-all duration-700" style="width: 0%;"></div>
+          </div>
+          <div class="flex justify-between items-center text-xs font-mono text-textGray">
+            <span>TERPAKAI: <span id="storage-used" class="text-white font-semibold">0 B</span></span>
+            <span>LIMIT: 2.00 GB</span>
+          </div>
+        </div>
+
+        <div class="text-[10px] font-mono text-textGray/60 flex items-center justify-between border-t border-borderDark/30 pt-3">
+          <span>SECURE ENCRYPTED NETWORK</span>
+          <span>NEXUS v1.0.4</span>
+        </div>
+      </div>
+
+      <!-- Card B: Intake / Upload Zone (with integrated Drag-Drop) -->
+      <div id="dropzone" class="bg-surface text-white p-6 rounded-card border border-borderDark/40 flex flex-col justify-between min-h-[200px] shadow-lg relative overflow-hidden transition-bento hover:scale-[1.01] hover:border-primary/50 group">
+        <div class="space-y-1">
+          <span class="block text-[10px] font-mono font-semibold text-primary uppercase tracking-wider">[ INTAKE ZONE ]</span>
+          <h2 class="text-lg font-bold tracking-tight">Unggah Berkas & Folder</h2>
+        </div>
+
+        <!-- Inside upload details -->
+        <div class="my-3 flex items-center gap-3 text-xs text-textGray">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-8 h-8 text-primary group-hover:scale-110 transition-transform"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          <div>
+            <p class="font-semibold text-white/90">Seret file langsung ke area ini</p>
+            <p class="text-[10px] text-textGray/70">Mendukung unggah folder secara rekursif</p>
+          </div>
+        </div>
+
+        <div class="flex gap-3 border-t border-borderDark/30 pt-3">
+          <button id="btn-upload-file" class="flex-1 bg-primary hover:bg-accent text-black text-[11px] font-bold uppercase tracking-wider py-2.5 rounded-control transition duration-300">
+            Pilih File
+          </button>
+          <button id="btn-upload-folder" class="flex-1 border border-white/20 hover:border-white text-white text-[11px] font-bold uppercase tracking-wider py-2.5 rounded-control transition duration-300">
+            Pilih Folder
+          </button>
+        </div>
+
+        <input type="file" id="file-input" multiple class="hidden">
+        <input type="file" id="folder-input" webkitdirectory directory multiple class="hidden">
+      </div>
+
+      <!-- Card C: Filter & Queries -->
+      <div class="bg-surface text-white p-6 rounded-card border border-borderDark/40 flex flex-col justify-between min-h-[200px] shadow-lg relative overflow-hidden transition-bento hover:scale-[1.01]">
+        <div class="space-y-1">
+          <span class="block text-[10px] font-mono font-semibold text-primary uppercase tracking-wider">[ DYNAMIC QUERY ]</span>
+          <h2 class="text-lg font-bold tracking-tight">Filter Berkas</h2>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3 my-3">
+          <div class="space-y-1">
+            <label for="filter-sort" class="block text-[9px] font-mono text-textGray uppercase">Urutkan</label>
+            <select id="filter-sort" class="w-full bg-black/40 border border-borderDark/60 rounded-control text-white text-xs outline-none px-2.5 py-1.5 transition focus:border-primary">
+              <option value="newest">Terbaru</option>
+              <option value="oldest">Terlama</option>
+              <option value="largest">Terbesar</option>
+              <option value="smallest">Terkecil</option>
+              <option value="name-asc">Nama A-Z</option>
+              <option value="name-desc">Nama Z-A</option>
+            </select>
+          </div>
+          <div class="space-y-1">
+            <label for="filter-size" class="block text-[9px] font-mono text-textGray uppercase">Ukuran</label>
+            <select id="filter-size" class="w-full bg-black/40 border border-borderDark/60 rounded-control text-white text-xs outline-none px-2.5 py-1.5 transition focus:border-primary">
+              <option value="all">Semua</option>
+              <option value="small">&lt; 10 MB</option>
+              <option value="medium">10-100 MB</option>
+              <option value="large">&gt; 100 MB</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="flex gap-3 border-t border-borderDark/30 pt-3 items-center">
+          <div class="relative flex-1">
+            <input type="text" id="filter-extension" placeholder="Contoh: pdf, zip, jpg" class="w-full bg-black/40 border border-borderDark/60 rounded-control text-white text-xs outline-none pl-12 pr-2 py-1.5 font-mono placeholder-textGray/40 transition focus:border-primary">
+            <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] font-mono text-textGray font-semibold select-none">EXT:</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Card D: File Explorer Panel (Col-span 3) -->
+      <div class="lg:col-span-3 bg-white dark:bg-surface border border-neutral-200 dark:border-borderDark/40 p-6 rounded-card shadow-sm flex flex-col gap-6 transition-colors duration-300">
+        
+        <!-- Tab Bar & Query controls -->
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-neutral-100 dark:border-borderDark/20">
+          
+          <!-- Category Horizontal Pills -->
+          <nav class="flex flex-wrap gap-2">
+            <button class="nav-btn bg-primary text-black font-semibold px-4 py-1.5 rounded-full text-xs border border-primary transition" data-category="all">
+              Semua
+            </button>
+            <button class="nav-btn bg-neutral-100 dark:bg-black/30 text-textGray dark:text-neutral-400 px-4 py-1.5 rounded-full text-xs border border-neutral-200 dark:border-borderDark/30 hover:border-primary/50 transition" data-category="image">
+              Gambar
+            </button>
+            <button class="nav-btn bg-neutral-100 dark:bg-black/30 text-textGray dark:text-neutral-400 px-4 py-1.5 rounded-full text-xs border border-neutral-200 dark:border-borderDark/30 hover:border-primary/50 transition" data-category="video">
+              Video
+            </button>
+            <button class="nav-btn bg-neutral-100 dark:bg-black/30 text-textGray dark:text-neutral-400 px-4 py-1.5 rounded-full text-xs border border-neutral-200 dark:border-borderDark/30 hover:border-primary/50 transition" data-category="audio">
+              Audio
+            </button>
+            <button class="nav-btn bg-neutral-100 dark:bg-black/30 text-textGray dark:text-neutral-400 px-4 py-1.5 rounded-full text-xs border border-neutral-200 dark:border-borderDark/30 hover:border-primary/50 transition" data-category="document">
+              Dokumen
+            </button>
+            <button class="nav-btn bg-neutral-100 dark:bg-black/30 text-textGray dark:text-neutral-400 px-4 py-1.5 rounded-full text-xs border border-neutral-200 dark:border-borderDark/30 hover:border-primary/50 transition" data-category="logs">
+              Log
+            </button>
+          </nav>
+
+          <!-- Search Bar & Layout Switcher -->
+          <div class="flex items-center gap-3">
+            <div class="relative w-full sm:w-64">
+              <input type="text" id="search-input" placeholder="Telusuri berkas..." class="w-full bg-neutral-100 dark:bg-black/40 border border-neutral-200 dark:border-borderDark/60 rounded-control text-xs outline-none pl-8 pr-8 py-2 text-textDark dark:text-white placeholder-textGray/50 focus:border-primary transition">
+              <svg class="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-textGray/60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <button class="absolute right-2.5 top-1/2 -translate-y-1/2 text-textGray font-semibold hidden hover:text-primary text-sm leading-none" id="search-clear">&times;</button>
+            </div>
+
+            <button id="btn-layout" class="w-9 h-9 rounded-control flex items-center justify-center border border-neutral-200 dark:border-borderDark/40 bg-neutral-50 dark:bg-black/20 hover:bg-neutral-100 dark:hover:bg-black/50 transition text-textDark dark:text-white" title="Ubah Tampilan">
+              <svg id="ic-list" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+              <svg id="ic-grid" class="w-4 h-4 hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <h2 id="ws-title" class="text-lg font-bold tracking-tight border-l-4 border-primary pl-3 hidden">Drive Saya</h2>
+
+        <!-- Files list display areas -->
+        <div class="relative min-h-[300px]">
+          
+          <!-- Loading overlay -->
+          <div id="files-loading" class="absolute inset-0 bg-white/60 dark:bg-surface/60 flex flex-col items-center justify-center gap-3 hidden z-10">
+            <div class="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+            <p class="text-sm font-mono text-textGray">[ MEMUAT DATABANK ]</p>
+          </div>
+
+          <!-- Empty State -->
+          <div id="empty-state" class="flex flex-col items-center justify-center py-16 text-center text-textGray">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" class="w-16 h-16 text-textGray/40 mb-3"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+            <h3 class="text-base font-bold text-textDark dark:text-white">Penyimpanan Kosong</h3>
+            <p class="text-xs text-textGray/70 mt-1">Seret file Anda ke zona Intake di atas untuk mengunggah.</p>
+          </div>
+
+          <!-- Files Grid / List Container -->
+          <div id="files-container" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4"></div>
+
+          <!-- Logs Activity Container -->
+          <div id="logs-container" class="hidden overflow-x-auto custom-scrollbar border border-neutral-100 dark:border-borderDark/40 rounded-control">
+            <table class="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr class="bg-neutral-50 dark:bg-black/40 border-b border-neutral-200 dark:border-borderDark/20 text-textGray font-mono">
+                  <th class="p-3">Waktu</th>
+                  <th class="p-3">Aksi</th>
+                  <th class="p-3">Detail Aktivitas</th>
+                  <th class="p-3">Status</th>
+                </tr>
+              </thead>
+              <tbody id="logs-tbody" class="divide-y divide-neutral-100 dark:divide-borderDark/20"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Active Uploads Floating Panel -->
+  <div id="upload-panel" class="fixed bottom-6 right-6 w-80 bg-surface border border-borderDark/40 text-white rounded-card shadow-2xl z-40 hidden flex flex-col overflow-hidden max-h-[380px]">
+    <div class="bg-black/60 px-5 py-3.5 border-b border-borderDark/20 flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <span class="w-2.5 h-2.5 bg-primary rounded-full animate-ping"></span>
+        <span class="text-xs font-mono font-bold tracking-wider uppercase">[ UPLOADING BACKSTAGE ]</span>
+      </div>
+      <button id="upload-panel-close" class="text-textGray hover:text-white font-semibold text-lg leading-none">&times;</button>
+    </div>
+    <div id="upload-items" class="p-4 overflow-y-auto custom-scrollbar divide-y divide-borderDark/20 space-y-3"></div>
+  </div>
+
+  <!-- Settings Dialog Overlay -->
+  <div id="settings-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-surface border border-borderDark/40 rounded-card w-full max-w-md text-white shadow-2xl overflow-hidden">
+      <div class="px-6 py-4 bg-black/40 border-b border-borderDark/20 flex justify-between items-center">
+        <h3 class="text-sm font-mono font-bold text-primary tracking-wider uppercase">[ SETTINGS PANEL ]</h3>
+        <button class="text-textGray hover:text-white text-xl font-semibold leading-none" id="settings-close">&times;</button>
+      </div>
+      
+      <form id="settings-form" class="p-6 space-y-6">
+        <div class="space-y-2">
+          <label for="s-chatid" class="block text-xs font-semibold text-textGray uppercase tracking-wider font-mono font-bold">Storage Chat ID (Group/Channel)</label>
+          <input type="text" id="s-chatid" class="w-full bg-black/40 border border-borderDark/60 rounded-control focus:border-primary text-white text-sm outline-none px-4 py-2.5 transition" required autocomplete="off">
+          <span class="block text-xs text-textGray/60">ID grup/channel Telegram tempat berkas disimpan.</span>
+        </div>
+
+        <div id="settings-error" class="hidden text-xs bg-red-950/40 border border-red-500/50 text-red-200 px-4 py-3 rounded-control"></div>
+        <div id="settings-success" class="hidden text-xs bg-emerald-950/40 border border-emerald-500/50 text-emerald-200 px-4 py-3 rounded-control"></div>
+
+        <div class="flex flex-col gap-2 pt-4 border-t border-borderDark/20">
+          <div class="flex gap-2">
+            <button type="button" class="flex-1 bg-red-950/20 hover:bg-red-950/60 text-red-400 border border-red-500/20 text-xs font-semibold uppercase tracking-wider py-2.5 rounded-control transition" id="btn-logout">
+              Keluar Sesi
+            </button>
+            <button type="button" class="flex-1 bg-red-950/20 hover:bg-red-950/60 text-red-400 border border-red-500/20 text-xs font-semibold uppercase tracking-wider py-2.5 rounded-control transition" id="btn-reset-drive">
+              Reset Drive
+            </button>
+          </div>
+          <div class="flex gap-2 mt-2">
+            <button type="button" class="flex-1 border border-white/20 hover:border-white text-white text-xs font-semibold uppercase tracking-wider py-2 rounded-control transition" id="settings-cancel">Batal</button>
+            <button type="submit" class="flex-1 bg-primary hover:bg-accent text-black text-xs font-semibold uppercase tracking-wider py-2 rounded-control transition flex items-center justify-center gap-2" id="settings-save">
+              <span>Simpan</span>
+              <div class="spin hidden w-3.5 h-3.5 border-2 border-black border-t-transparent rounded-full animate-spin"></div>
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Custom Confirm Dialog Overlay -->
+  <div id="confirm-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-surface border border-borderDark/40 rounded-card w-full max-w-sm text-white shadow-2xl overflow-hidden">
+      <div class="px-5 py-3.5 bg-black/40 border-b border-borderDark/20 flex justify-between items-center">
+        <h3 class="text-xs font-mono font-bold text-primary tracking-wider uppercase" id="confirm-title">Konfirmasi</h3>
+        <button class="text-textGray hover:text-white text-lg font-semibold leading-none" id="confirm-close">&times;</button>
+      </div>
+      <div class="p-5 space-y-5">
+        <p id="confirm-message" class="text-sm text-textGray leading-relaxed"></p>
+        <div class="flex gap-3 pt-3 border-t border-borderDark/20">
+          <button type="button" class="flex-1 border border-white/20 hover:border-white text-white text-xs font-semibold uppercase tracking-wider py-2 rounded-control transition" id="confirm-btn-cancel">Batal</button>
+          <button type="button" class="flex-1 bg-red-600 hover:bg-red-500 text-white text-xs font-semibold uppercase tracking-wider py-2 rounded-control transition" id="confirm-btn-ok">Hapus</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Context Menu (Dropdown Menu on Right-Click) -->
+  <div id="ctx-menu" class="absolute bg-surface border border-borderDark/60 text-white py-1.5 rounded-control shadow-2xl w-44 z-50 hidden text-xs font-mono">
+    <button class="w-full text-left px-4 py-2 hover:bg-neutral-800 flex items-center gap-2.5 transition" id="ctx-download">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-3.5 h-3.5 text-textGray"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      DOWNLOAD
+    </button>
+    <button class="w-full text-left px-4 py-2 hover:bg-neutral-800 flex items-center gap-2.5 transition" id="ctx-preview">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-3.5 h-3.5 text-textGray"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+      PREVIEW
+    </button>
+    <div class="border-t border-borderDark/30 my-1"></div>
+    <button class="w-full text-left px-4 py-2 hover:bg-red-950/40 text-red-400 flex items-center gap-2.5 transition" id="ctx-delete">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-3.5 h-3.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+      DELETE
+    </button>
+  </div>
+
+  <!-- Lightbox Media Preview Dialog -->
+  <div id="lightbox" class="fixed inset-0 bg-black/95 backdrop-blur-md z-50 flex items-center justify-center p-4 hidden">
+    <!-- Slider Buttons -->
+    <button id="lb-prev" class="absolute left-4 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full border border-white/20 bg-black/40 hover:bg-black/85 text-white flex items-center justify-center transition hover:border-primary hidden z-10" title="Sebelumnya">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-6 h-6"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+    <button id="lb-next" class="absolute right-4 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full border border-white/20 bg-black/40 hover:bg-black/85 text-white flex items-center justify-center transition hover:border-primary hidden z-10" title="Berikutnya">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-6 h-6"><polyline points="9 18 15 12 9 6"/></svg>
+    </button>
+    
+    <div class="bg-surface border border-borderDark/40 rounded-card w-full max-w-3xl text-white shadow-2xl relative overflow-hidden flex flex-col max-h-[90vh]">
+      <button class="absolute right-4 top-4 text-textGray hover:text-white text-3xl font-light leading-none z-10" id="lb-close">&times;</button>
+      
+      <!-- Content Container -->
+      <div class="lb-content p-6 flex flex-col items-center justify-center flex-1 overflow-y-auto min-h-[250px] max-h-[60vh] custom-scrollbar">
+        <!-- Loader -->
+        <div id="lb-loading" class="flex flex-col items-center gap-3">
+          <div class="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+          <p class="text-xs font-mono text-textGray">[ DOWNLOADING BUFFER ]</p>
+        </div>
+
+        <img id="lb-img" class="max-w-full max-h-[50vh] object-contain rounded-control hidden" alt="">
+        <video id="lb-video" class="max-w-full max-h-[50vh] rounded-control hidden" controls></video>
+        <audio id="lb-audio" class="w-full max-w-md hidden" controls></audio>
+        <iframe id="lb-pdf" class="w-full h-[50vh] rounded-control hidden bg-white"></iframe>
+        
+        <pre id="lb-text" class="w-full h-[50vh] rounded-control hidden text-xs font-mono p-4 bg-black/40 border border-borderDark/40 text-left overflow-auto custom-scrollbar white-space-pre-wrap"></pre>
+        
+        <div id="lb-nopreview" class="flex flex-col items-center gap-3 text-textGray hidden">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="w-16 h-16 text-textGray/45"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          <p class="text-xs font-mono uppercase tracking-wider">[ PRATINJAU TIDAK TERSEDIA ]</p>
+        </div>
+      </div>
+
+      <!-- Action Bar -->
+      <div class="bg-black/60 px-6 py-4 border-t border-borderDark/20 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div class="space-y-0.5">
+          <h4 class="lb-name text-sm font-bold truncate max-w-md font-sans" id="lb-name">-</h4>
+          <p class="lb-size text-xs text-textGray font-mono" id="lb-size">-</p>
+        </div>
+        
+        <div class="flex gap-2">
+          <a href="" id="lb-download" class="bg-primary hover:bg-accent text-black text-xs font-bold uppercase tracking-wider py-2 px-4 rounded-control transition flex items-center gap-1.5" download>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-3.5 h-3.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Unduh
+          </a>
+          <a href="" id="lb-download-original" class="border border-white/30 hover:border-primary/60 text-textGray hover:text-white text-xs font-bold uppercase tracking-wider py-2 px-4 rounded-control transition flex items-center gap-1.5" download>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-3.5 h-3.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Asli
+          </a>
+          <button id="lb-delete" class="border border-white/20 hover:border-white text-white text-xs font-bold uppercase tracking-wider py-2 px-4 rounded-control transition flex items-center gap-1.5">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-3.5 h-3.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            Hapus
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Floating Bulk Actions Bar (Bottom Center) -->
+  <div id="bulk-bar" class="fixed bottom-6 left-1/2 -translate-x-1/2 bg-surface/90 backdrop-blur-md border border-borderDark/60 px-6 py-4 rounded-card text-white flex items-center justify-between gap-6 shadow-2xl z-40 hidden w-[90%] sm:w-auto">
+    <div class="flex items-center gap-2.5 font-mono text-xs text-primary font-bold whitespace-nowrap">
+      <span class="flex h-2.5 w-2.5 relative">
+        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+        <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-primary"></span>
+      </span>
+      <span><span id="bulk-count">0</span> TERPILIH</span>
+    </div>
+    
+    <div class="flex items-center gap-2">
+      <button id="bulk-select-all" class="text-[10px] font-mono font-bold uppercase tracking-wider px-3 py-1.5 border border-white/20 hover:border-white rounded-control transition">Pilih Semua</button>
+      
+      <button id="bulk-download" class="bg-primary hover:bg-accent text-black text-[10px] font-bold uppercase tracking-wider py-1.5 px-3.5 rounded-control transition flex items-center gap-1">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-3 h-3"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Unduh
+      </button>
+      
+      <button id="bulk-delete" class="bg-red-600 hover:bg-red-500 text-white text-[10px] font-bold uppercase tracking-wider py-1.5 px-3.5 rounded-control transition flex items-center gap-1">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-3 h-3"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        Hapus
+      </button>
+      
+      <button id="bulk-cancel" class="text-[10px] font-mono text-textGray hover:text-white uppercase px-2 py-1.5 transition">Batal</button>
+    </div>
+  </div>
+
+  <!-- Toast Notification -->
+  <div id="toast" class="fixed bottom-6 left-6 bg-surface border border-primary/50 text-white px-5 py-3 rounded-card text-xs font-mono shadow-2xl z-50 flex items-center gap-3 hidden">
+    <span class="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
+    <span id="toast-msg">Notifikasi</span>
+  </div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+node_modules/
+config.json
+temp/
+uploads/
+cache/
+thumbs/
+metadata.db
+.env
+*.log
