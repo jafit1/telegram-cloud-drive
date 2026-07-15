@@ -78,6 +78,16 @@
     return d === -1 ? '' : name.substring(d + 1).toUpperCase();
   }
 
+  // Detect image files by extension, stripping .partN suffix (e.g. "DSCF0024.JPG.part1" → JPG)
+  const IMAGE_EXTS = new Set(['JPG','JPEG','PNG','GIF','BMP','WEBP','HEIC','HEIF','TIFF','TIF','SVG','ICO','AVIF']);
+  function isImageByFilename(name) {
+    // Strip .partN suffix if present
+    const stripped = name.replace(/\.part\d+$/i, '');
+    const ext = getExt(stripped);
+    return IMAGE_EXTS.has(ext);
+  }
+
+
   function toast(msg) {
     $('#toast-msg').textContent = msg;
     toastEl.classList.remove('hidden');
@@ -682,8 +692,9 @@
     const selectedCardClass = selectedKeys.has(f.file_key) ? 'ring-2 ring-primary border-primary bg-primary/5' : '';
 
     let thumbHtml = '';
-    if (f.category === 'image') {
-      // Always try to load thumbnail for images; Sharp generates it on the fly
+    const isImgFile = isImageByFilename(f.filename);
+    if (f.category === 'image' || isImgFile) {
+      // Always try to load thumbnail for images (including .part files with image extensions)
       thumbHtml = `<img src="/api/thumb/${f.file_key}" loading="lazy" class="w-full h-full object-cover transition duration-300 group-hover:scale-105" alt="${f.filename}" onerror="this.style.display='none';this.nextSibling.style.display='flex'"><span class="font-mono text-[10px] font-bold tracking-wider text-textGray dark:text-neutral-400 select-none" style="display:none">${ext || 'FILE'}</span>`;
     } else if (f.telegram_thumb_id) {
       thumbHtml = `<img src="/api/thumb/${f.file_key}" loading="lazy" class="w-full h-full object-cover transition duration-300 group-hover:scale-105" alt="${f.filename}">`;
@@ -720,8 +731,9 @@
     const selectedCardClass = selectedKeys.has(f.file_key) ? 'bg-primary/5 border-l-4 border-l-primary' : '';
 
     let thumbHtml = '';
-    if (f.category === 'image') {
-      // Always try to load thumbnail for images; Sharp generates it on the fly
+    const isImgFile2 = isImageByFilename(f.filename);
+    if (f.category === 'image' || isImgFile2) {
+      // Always try to load thumbnail for images (including .part files with image extensions)
       thumbHtml = `<img src="/api/thumb/${f.file_key}" loading="lazy" class="w-8 h-8 rounded-control object-cover shrink-0 border border-neutral-200/50 dark:border-borderDark/30" alt="" onerror="this.style.display='none';this.nextSibling.style.display='flex'"><div class="w-8 h-8 rounded-control bg-neutral-100 dark:bg-black/30 border border-neutral-200/50 dark:border-borderDark/30 flex items-center justify-center text-[9px] font-mono font-bold text-textGray shrink-0 select-none" style="display:none">${ext || 'FILE'}</div>`;
     } else if (f.telegram_thumb_id) {
       thumbHtml = `<img src="/api/thumb/${f.file_key}" loading="lazy" class="w-8 h-8 rounded-control object-cover shrink-0 border border-neutral-200/50 dark:border-borderDark/30" alt="">`;

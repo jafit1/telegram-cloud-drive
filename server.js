@@ -678,8 +678,13 @@ app.get('/api/thumb/:fileKey', checkConfig, async (req, res) => {
       }
     }
 
-    // 2nd attempt (images only): Generate thumbnail from file using Sharp
-    if (file.category === 'image' && sharp) {
+    // 2nd attempt: Generate thumbnail from file using Sharp (for images by category or extension)
+    const IMAGE_EXTS_SET = new Set(['.jpg','.jpeg','.png','.gif','.bmp','.webp','.heic','.heif','.tiff','.tif','.avif']);
+    const strippedName = file.filename.replace(/\.part\d+$/i, '');
+    const realExt = path.extname(strippedName).toLowerCase();
+    const isImageFile = file.category === 'image' || IMAGE_EXTS_SET.has(realExt);
+    
+    if (isImageFile && sharp) {
       // Use a temp file (NOT persistent volume) to avoid filling storage
       const tmpPath = path.join(require('os').tmpdir(), `thumb_tmp_${fileKey}${ext}`);
       
