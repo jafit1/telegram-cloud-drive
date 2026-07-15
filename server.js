@@ -999,11 +999,13 @@ async function syncAllFromChannel() {
           .filter(a => a.className === 'DocumentAttributeFilename')
           .map(a => a.fileName)[0] || `file_${msg.id}`;
         const mimeType = doc.mimeType || 'application/octet-stream';
-        const totalSize = doc.size || 0;
+        // Convert Long/BigInt values to plain Number for SQLite binding
+        const totalSize = typeof doc.size === 'object' && doc.size !== null ? Number(doc.size) : (parseInt(doc.size) || 0);
         const fileKey = `sync_${msg.id}`;
 
-        // Check if file already exists by telegram_media_id (message ID)
-        const existing = db.getFile(fileKey);
+        // Check if file already exists by file_key (message ID)
+        let existing;
+        try { existing = db.getFile(fileKey); } catch { existing = null; }
         if (existing) {
           skipped++;
           continue;
@@ -1011,9 +1013,9 @@ async function syncAllFromChannel() {
 
         const category = getCategory(filename, mimeType);
         const telegramMediaId = msg.id.toString();
-        const accessHash = doc.accessHash ? doc.accessHash.toString() : '0';
-        const fileReference = doc.fileReference ? doc.fileReference.toString('hex') : '';
-        const dcId = doc.dcId || 4;
+        const accessHash = doc.accessHash ? (typeof doc.accessHash === 'object' ? doc.accessHash.toString() : String(doc.accessHash)) : '0';
+        const fileReference = doc.fileReference ? (Buffer.isBuffer(doc.fileReference) ? doc.fileReference.toString('hex') : String(doc.fileReference)) : '';
+        const dcId = typeof doc.dcId === 'object' && doc.dcId !== null ? Number(doc.dcId) : (parseInt(doc.dcId) || 4);
 
         db.saveFile(fileKey, filename, mimeType, category, totalSize, telegramMediaId, accessHash, fileReference, null, dcId);
         added++;
