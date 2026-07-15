@@ -403,6 +403,58 @@
     toast('Berhasil keluar sesi.');
   });
 
+  // Sync button
+  $('#btn-sync').addEventListener('click', async () => {
+    const btn = $('#btn-sync');
+    const icon = btn.querySelector('.sync-icon');
+    const text = btn.querySelector('.sync-text');
+    const origText = text.textContent;
+
+    btn.disabled = true;
+    icon.classList.add('animate-spin');
+    text.textContent = 'Syning...';
+    toast('Memulai sinkronisasi dari channel Telegram...', 'info');
+
+    try {
+      const res = await fetch('/api/sync', { method: 'POST' });
+      const data = await res.json();
+      toast(data.message || 'Sinkronisasi dimulai!', 'success');
+      // Poll sync status until done
+      await pollSyncStatus();
+    } catch (err) {
+      toast('Gagal sync: ' + err.message, 'error');
+    } finally {
+      btn.disabled = false;
+      icon.classList.remove('animate-spin');
+      text.textContent = origText;
+    }
+  });
+
+  async function pollSyncStatus() {
+    return new Promise((resolve) => {
+      const interval = setInterval(async () => {
+        try {
+          const res = await fetch('/api/sync-status');
+          const data = await res.json();
+          if (!data.syncing) {
+            clearInterval(interval);
+            toast('Sinkronisasi selesai!', 'success');
+            loadFiles();
+            loadStats();
+            resolve();
+          }
+        } catch {
+          // ignore
+        }
+      }, 1000);
+      // Max wait 5 minutes
+      setTimeout(() => {
+        clearInterval(interval);
+        resolve();
+      }, 300000);
+    });
+  }
+
   /* ===================================================================
      FILE LIST & ACTIVITY LOG LOADING
      =================================================================== */

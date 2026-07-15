@@ -944,7 +944,120 @@ app.get('/api/logs', (req, res) => {
   }
 });
 
-// 12. Stats
+// 13. Sync — Scan Telegram channel and add missing files to database
+let syncInProgress = false;
+
+app.post('/api/sync', checkConfig, async (req, res) => {
+  if (syncInProgress) {
+    return res.json({ success: true, message: 'Sync sudah berjalan...' });
+  }
+  syncInProgress = true;
+  res.json({ success: true, message: 'Memulai sinkronisasi...' });
+
+  // Continue in background
+  syncAllFromChannel().then(result => {
+    syncInProgress = false;
+    console.log(`Sync selesai: ${result.added} file baru ditambahkan, ${result.skipped} sudah ada.`);
+  }).catch(err => {
+    syncInProgress = false;
+    console.error('Sync error:', err.message);
+  });
+});
+
+async function syncAllFromChannel() {
+  let added = 0;
+  let skipped = 0;
+  let offsetId = 0;
+
+  console.log('Memulai sinkronisasi dari channel Telegram...');
+  db.logActivity('Sync', 'Memulai sinkronisasi dari channel Telegram...');
+
+  await ensureConnection();
+
+  while (true) {
+    try {
+      const result = await client.invoke(new Api.messages.GetHistory({
+        peer: config.chatId,
+        offsetId: offsetId,
+        offsetDate: 0,
+        addOffset: 0,
+        limit: 100,
+        maxId: 0,
+        minId: 0,
+        hash: 0
+      }));
+
+      const messages = result.messages || [];
+      if (messages.length === 0) break;
+
+      for (const msg of messages) {
+        // Skip empty messages or non-document media
+        if (!msg.media || !msg.media.document) continue;
+
+        const doc = msg.media.document;
+        const filename = (doc.attributes || [])
+          .filter(a => a.className === 'DocumentAttributeFilename')
+          .map(a => a.fileName)[0] || `file_${msg.id}`;
+        const mimeType = doc.mimeType || 'application/octet-stream';
+        const totalSize = doc.size || 0;
+        const fileKey = `sync_${msg.id}`;
+
+        // Check if file already exists by telegram_media_id (message ID)
+        const existing = db.getFile(fileKey);
+        if (existing) {
+          skipped++;
+          continue;
+        }
+
+        const category = getCategory(filename, mimeType);
+        const telegramMediaId = msg.id.toString();
+        const accessHash = doc.accessHash ? doc.accessHash.toString() : '0';
+        const fileReference = doc.fileReference ? doc.fileReference.toString('hex') : '';
+        const dcId = doc.dcId || 4;
+
+        db.saveFile(fileKey, filename, mimeType, category, totalSize, telegramMediaId, accessHash, fileReference, null, dcId);
+        added++;
+
+        // Download thumbnail in background (non-blocking)
+        try {
+          const thumbBuffer = await downloadTelegramThumb(msg);
+          if (thumbBuffer) {
+            const ext = path.extname(filename) || '';
+            fs.writeFileSync(path.join(thumbDir, `${fileKey}${ext}`), thumbBuffer);
+            db.updateFileThumb(fileKey, 'local_cached');
+          }
+        } catch (thumbErr) {
+          // Silently fail thumbnail download
+        }
+      }
+
+      // Update offset to get older messages (pagination)
+      if (messages.length > 0) {
+        offsetId = messages[messages.length - 1].id;
+      }
+
+      // If less than 100 messages, we've reached the end
+      if (messages.length < 100) break;
+
+      // Small delay to avoid rate limiting
+      await new Promise(r => setTimeout(r, 200));
+    } catch (err) {
+      console.error('Sync batch error:', err.message);
+      break;
+    }
+  }
+
+  const result = { added, skipped };
+  db.logActivity('Sync', `Sinkronisasi selesai: ${result.added} file baru, ${result.skipped} sudah ada.`);
+  return result;
+}
+
+// 14. Sync status
+app.get('/api/sync-status', (req, res) => {
+  res.json({ syncing: syncInProgress });
+});
+
+// 15. Stats
 app.get('/api/stats', (req, res) => {
   try { res.json(db.getStats()); }
   catch (err) { res.status(500).json({ error: err.message }); }
