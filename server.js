@@ -680,24 +680,22 @@ app.get('/api/thumb/:fileKey', checkConfig, async (req, res) => {
 
     // 2nd attempt (images only): Generate thumbnail from file using Sharp
     if (file.category === 'image' && sharp) {
-      const cachedPath = path.join(cacheDir, `${fileKey}${ext}`);
+      // Use a temp file (NOT persistent volume) to avoid filling storage
+      const tmpPath = path.join(require('os').tmpdir(), `thumb_tmp_${fileKey}${ext}`);
       
-      // Download the file if not already cached
-      if (!fs.existsSync(cachedPath)) {
+      try {
         console.log(`Downloading file for thumbnail generation: ${file.filename}`);
         await ensureConnection();
         const msgs = await client.getMessages(config.chatId, { ids: [parseInt(file.telegram_media_id)] });
         if (msgs && msgs.length > 0 && msgs[0].media) {
           await client.downloadMedia(msgs[0].media, {
-            outputFile: cachedPath,
+            outputFile: tmpPath,
             workers: 4
           });
         }
-      }
 
-      if (fs.existsSync(cachedPath)) {
-        try {
-          const thumbBuffer = await sharp(cachedPath)
+        if (fs.existsSync(tmpPath)) {
+          const thumbBuffer = await sharp(tmpPath)
             .resize(300, 300, { fit: 'cover', position: 'centre' })
             .webp({ quality: 65 })
             .toBuffer();
@@ -705,10 +703,16 @@ app.get('/api/thumb/:fileKey', checkConfig, async (req, res) => {
           db.updateFileThumb(fileKey, 'local_cached');
           res.setHeader('Content-Type', 'image/webp');
           console.log(`Sharp thumbnail generated: ${file.filename}`);
+          
+          // IMPORTANT: Delete temp file immediately to save storage
+          try { fs.unlinkSync(tmpPath); } catch {}
+          
           return res.send(thumbBuffer);
-        } catch (sharpErr) {
-          console.error('Sharp thumbnail generation failed:', sharpErr.message);
         }
+      } catch (sharpErr) {
+        console.error('Sharp thumbnail generation failed:', sharpErr.message);
+        // Clean up temp file on error too
+        try { fs.unlinkSync(tmpPath); } catch {}
       }
     }
 
@@ -1111,5 +1115,31 @@ app.get('/api/stats', (req, res) => {
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
+
+// Startup: Clean up cache directory to free volume space
+function cleanupCacheDir() {
+  try {
+    const files = fs.readdirSync(cacheDir);
+    let freedBytes = 0;
+    let count = 0;
+    for (const f of files) {
+      const fp = path.join(cacheDir, f);
+      try {
+        const stat = fs.statSync(fp);
+        if (stat.isFile()) {
+          freedBytes += stat.size;
+          fs.unlinkSync(fp);
+          count++;
+        }
+      } catch {}
+    }
+    if (count > 0) {
+      console.log(`Startup cleanup: Deleted ${count} cached files, freed ${(freedBytes / 1024 / 1024).toFixed(1)} MB`);
+    }
+  } catch (err) {
+    console.error('Cleanup error:', err.message);
+  }
+}
+cleanupCacheDir();
 
 app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT} (Data dir: ${dataDir})`));
