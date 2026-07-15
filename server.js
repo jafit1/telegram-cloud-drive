@@ -641,7 +641,7 @@ app.get('/api/uploads', (req, res) => {
   res.json(uploads);
 });
 
-// 6. Thumbnail endpoint
+// 6. Thumbnail endpoint — with Sharp fallback for images
 app.get('/api/thumb/:fileKey', checkConfig, async (req, res) => {
   const { fileKey } = req.params;
   try {
@@ -649,15 +649,22 @@ app.get('/api/thumb/:fileKey', checkConfig, async (req, res) => {
     if (!file) return res.status(404).end();
 
     const ext = path.extname(file.filename) || '';
+    
+    // Check for existing thumbnail (both original extension and .webp)
     const thumbPath = path.join(thumbDir, `${fileKey}${ext}`);
-
+    const thumbWebpPath = path.join(thumbDir, `${fileKey}.webp`);
+    
     if (fs.existsSync(thumbPath)) {
       return res.sendFile(thumbPath);
     }
+    if (fs.existsSync(thumbWebpPath)) {
+      res.setHeader('Content-Type', 'image/webp');
+      return res.sendFile(thumbWebpPath);
+    }
 
-    // Download thumbnail dynamically from Telegram
     if (!file.telegram_media_id) return res.status(404).end();
 
+    // 1st attempt: Download Telegram native thumbnail
     console.log(`Downloading thumbnail dynamically for: ${file.filename}`);
     await ensureConnection();
     const messages = await client.getMessages(config.chatId, { ids: [parseInt(file.telegram_media_id)] });
@@ -670,9 +677,44 @@ app.get('/api/thumb/:fileKey', checkConfig, async (req, res) => {
         return res.sendFile(thumbPath);
       }
     }
+
+    // 2nd attempt (images only): Generate thumbnail from file using Sharp
+    if (file.category === 'image' && sharp) {
+      const cachedPath = path.join(cacheDir, `${fileKey}${ext}`);
+      
+      // Download the file if not already cached
+      if (!fs.existsSync(cachedPath)) {
+        console.log(`Downloading file for thumbnail generation: ${file.filename}`);
+        await ensureConnection();
+        const msgs = await client.getMessages(config.chatId, { ids: [parseInt(file.telegram_media_id)] });
+        if (msgs && msgs.length > 0 && msgs[0].media) {
+          await client.downloadMedia(msgs[0].media, {
+            outputFile: cachedPath,
+            workers: 4
+          });
+        }
+      }
+
+      if (fs.existsSync(cachedPath)) {
+        try {
+          const thumbBuffer = await sharp(cachedPath)
+            .resize(300, 300, { fit: 'cover', position: 'centre' })
+            .webp({ quality: 65 })
+            .toBuffer();
+          fs.writeFileSync(thumbWebpPath, thumbBuffer);
+          db.updateFileThumb(fileKey, 'local_cached');
+          res.setHeader('Content-Type', 'image/webp');
+          console.log(`Sharp thumbnail generated: ${file.filename}`);
+          return res.send(thumbBuffer);
+        } catch (sharpErr) {
+          console.error('Sharp thumbnail generation failed:', sharpErr.message);
+        }
+      }
+    }
+
     return res.status(404).end();
   } catch (err) {
-    console.error('Thumbnail download error:', err);
+    console.error('Thumbnail error:', err);
     if (!res.headersSent) res.status(500).end();
   }
 });
