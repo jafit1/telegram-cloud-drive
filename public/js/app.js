@@ -13,6 +13,8 @@
   let isConfigured = false;
   let layoutMode = 'grid'; // 'grid' | 'list'
   let currentAuthId = null; // Temp auth session ID for OTP login
+  let currentFolderPath = '';
+  const activeXHRs = new Map();
 
   /* ───── DOM Refs ───── */
   const $ = s => document.querySelector(s);
@@ -539,8 +541,202 @@
   /* ===================================================================
      RENDER FILES
      =================================================================== */
+  function folderCard(folderName, fileCount, fullPath) {
+    return `
+    <div class="relative bg-neutral-50 dark:bg-black/30 border border-neutral-200/60 dark:border-borderDark/40 rounded-card p-3.5 hover:shadow-md transition-all duration-300 group hover:scale-[1.02] flex items-center gap-3.5 cursor-pointer select-none" data-folder="${fullPath}">
+      <div class="w-10 h-10 bg-primary/10 rounded-control flex items-center justify-center border border-primary/20 text-primary shrink-0 group-hover:scale-105 transition-transform">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-5 h-5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+      </div>
+      <div class="overflow-hidden flex-1">
+        <h4 class="text-xs font-semibold text-textDark dark:text-white truncate" title="${folderName}">${folderName}</h4>
+        <p class="text-[9px] font-mono text-textGray mt-0.5">${fileCount} berkas</p>
+      </div>
+    </div>`;
+  }
+
+  function folderRow(folderName, fileCount, fullPath) {
+    return `
+    <div class="flex items-center justify-between p-3.5 hover:bg-neutral-50 dark:hover:bg-black/40 transition duration-150 cursor-pointer select-none text-xs" data-folder="${fullPath}">
+      <div class="flex items-center gap-2.5 overflow-hidden flex-1 pr-4">
+        <div class="w-8 h-8 rounded-control bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shrink-0">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+        </div>
+        <span class="text-xs font-semibold text-textDark dark:text-white truncate" title="${folderName}">${folderName}</span>
+      </div>
+      <span class="w-24 shrink-0 text-right font-mono text-textGray pr-4">${fileCount} berkas</span>
+      <span class="w-8 shrink-0"></span>
+    </div>`;
+  }
+
+  function updateBreadcrumb() {
+    const bc = $('#folder-breadcrumb');
+    if (!bc) return;
+    if (currentCategory !== 'folder') {
+      bc.classList.add('hidden');
+      return;
+    }
+    bc.classList.remove('hidden');
+    bc.innerHTML = '';
+
+    // Add Root link
+    const rootLink = document.createElement('span');
+    rootLink.className = 'hover:text-primary cursor-pointer font-bold';
+    rootLink.textContent = 'DRIVE';
+    rootLink.addEventListener('click', () => {
+      currentFolderPath = "";
+      render();
+    });
+    bc.appendChild(rootLink);
+
+    if (currentFolderPath) {
+      const parts = currentFolderPath.split('/');
+      let accumPath = "";
+      parts.forEach((p, idx) => {
+        accumPath += (idx > 0 ? '/' : '') + p;
+        const currentAccum = accumPath; // capture
+        
+        const sep = document.createElement('span');
+        sep.textContent = ' > ';
+        bc.appendChild(sep);
+
+        const link = document.createElement('span');
+        link.className = 'hover:text-primary cursor-pointer truncate max-w-[120px] inline-block align-middle';
+        link.textContent = p;
+        link.title = p;
+        link.addEventListener('click', () => {
+          currentFolderPath = currentAccum;
+          render();
+        });
+        bc.appendChild(link);
+      });
+    }
+  }
+
+  function renderFolderView() {
+    let prefix = currentFolderPath ? currentFolderPath + '/' : '';
+    let folderFiles = allFiles;
+    
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      folderFiles = folderFiles.filter(f => f.filename.toLowerCase().includes(q));
+    }
+    
+    // Filter files that are in this folder path prefix
+    let filesInPath = folderFiles.filter(f => f.filename.startsWith(prefix));
+    
+    let subfolders = new Map(); // name -> { count, fullPath }
+    let filesHere = [];
+    
+    filesInPath.forEach(f => {
+      let relPath = f.filename.substring(prefix.length);
+      let slashIdx = relPath.indexOf('/');
+      if (slashIdx === -1) {
+        // File at this level
+        filesHere.push(f);
+      } else {
+        // Inside a subfolder
+        let subfolderName = relPath.substring(0, slashIdx);
+        let fullSubPath = prefix + subfolderName;
+        if (subfolders.has(subfolderName)) {
+          subfolders.get(subfolderName).count++;
+        } else {
+          subfolders.set(subfolderName, { count: 1, fullPath: fullSubPath });
+        }
+      }
+    });
+
+    filesContainer.innerHTML = '';
+    const totalItems = subfolders.size + filesHere.length;
+    emptyState.classList.toggle('hidden', totalItems > 0);
+
+    if (layoutMode === 'grid') {
+      filesContainer.className = 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3';
+    } else {
+      filesContainer.className = 'flex flex-col border border-neutral-200 dark:border-borderDark/30 rounded-control overflow-hidden divide-y divide-neutral-100 dark:divide-borderDark/30 bg-white dark:bg-surface/40';
+      if (totalItems > 0) {
+        const header = document.createElement('div');
+        header.className = 'flex items-center justify-between p-3.5 bg-neutral-50 dark:bg-black/30 text-textGray font-mono text-[10px] font-bold uppercase tracking-wider border-b border-neutral-200 dark:border-borderDark/30 select-none';
+        header.innerHTML = `
+          <div class="w-5 mr-3 shrink-0"></div>
+          <div class="flex-1 pr-4">Nama</div>
+          <div class="w-20 shrink-0 text-right pr-4">Keterangan</div>
+          <div class="w-24 shrink-0 text-right hidden sm:block pr-4"></div>
+          <div class="w-8 shrink-0"></div>
+        `;
+        filesContainer.appendChild(header);
+      }
+    }
+
+    // Render Subfolders first
+    subfolders.forEach((info, name) => {
+      const html = layoutMode === 'grid' ? folderCard(name, info.count, info.fullPath) : folderRow(name, info.count, info.fullPath);
+      const temp = document.createElement('div');
+      temp.innerHTML = html.trim();
+      const el = temp.firstChild;
+      
+      el.addEventListener('click', () => {
+        currentFolderPath = info.fullPath;
+        render();
+      });
+
+      filesContainer.appendChild(el);
+    });
+
+    // Render Files next
+    filesHere.forEach(f => {
+      const html = layoutMode === 'grid' ? gridCard(f) : listRow(f);
+      const temp = document.createElement('div');
+      temp.innerHTML = html.trim();
+      const el = temp.firstChild;
+      
+      el.addEventListener('click', () => openLightbox(f));
+      el.addEventListener('contextmenu', e => { e.preventDefault(); showCtx(e, f); });
+      
+      const dots = el.querySelector('.fc-dots');
+      if (dots) {
+        dots.addEventListener('click', e => { e.stopPropagation(); showCtx(e, f); });
+      }
+
+      // Checkbox event binding
+      const cb = el.querySelector('.fc-checkbox, .fr-checkbox');
+      if (cb) {
+        cb.addEventListener('change', e => {
+          const key = cb.dataset.key;
+          const wrapper = cb.closest('label');
+          const span = wrapper.querySelector('span');
+          if (cb.checked) {
+            selectedKeys.add(key);
+            wrapper.classList.remove('opacity-0');
+            wrapper.classList.add('opacity-100', 'border-primary', 'bg-primary');
+            if (span) span.className = 'w-2 h-2 bg-black rounded-[1px] transition scale-100';
+            el.classList.add('ring-2', 'ring-primary', 'border-primary', 'bg-primary/5');
+          } else {
+            selectedKeys.delete(key);
+            wrapper.classList.remove('opacity-100', 'border-primary', 'bg-primary');
+            wrapper.classList.add('opacity-0');
+            if (span) span.className = 'w-2 h-2 bg-primary rounded-[1px] transition scale-0';
+            el.classList.remove('ring-2', 'ring-primary', 'border-primary', 'bg-primary/5');
+          }
+          updateBulkBar();
+        });
+      }
+
+      filesContainer.appendChild(el);
+    });
+
+    updateBulkBar();
+  }
+
   function render() {
+    updateBreadcrumb();
+
     let list = allFiles;
+    
+    if (currentCategory === 'folder') {
+      renderFolderView();
+      return;
+    }
+
     if (currentCategory !== 'all') {
       list = list.filter(f => f.category === currentCategory);
     }
@@ -764,10 +960,11 @@
      =================================================================== */
   $$('.nav-btn').forEach(btn => btn.addEventListener('click', () => {
     $$('.nav-btn').forEach(b => {
-      b.className = 'nav-btn bg-neutral-100 dark:bg-black/30 text-textGray dark:text-neutral-400 px-4 py-1.5 rounded-full text-xs border border-neutral-200 dark:border-borderDark/30 hover:border-primary/50 transition';
+      b.className = 'nav-btn flex items-center justify-between px-3 py-2 rounded-control text-sm font-medium transition-colors text-textGray dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-black/40 hover:text-textDark dark:hover:text-white border border-transparent';
     });
-    btn.className = 'nav-btn bg-primary text-black font-semibold px-4 py-1.5 rounded-full text-xs border border-primary transition';
+    btn.className = 'nav-btn flex items-center justify-between px-3 py-2 rounded-control text-sm font-medium transition-colors bg-primary/10 text-primary border border-primary/20';
     currentCategory = btn.dataset.category;
+    currentFolderPath = '';
 
     const titles = {
       all: 'Drive Saya',
@@ -775,9 +972,12 @@
       video: 'Video',
       audio: 'Audio',
       document: 'Dokumen',
+      folder: 'Folder Browsing',
       logs: 'Log Aktivitas'
     };
     $('#ws-title').textContent = titles[currentCategory] || 'Drive Saya';
+
+    updateBreadcrumb();
 
     if (currentCategory === 'logs') {
       filesContainer.classList.add('hidden');
@@ -814,14 +1014,11 @@
   });
 
   /* ===================================================================
-     THEME TOGGLE
+     THEME — light-only (Awesomic editorial)
      =================================================================== */
-  const savedTheme = localStorage.getItem('drive-theme') || 'dark';
-  if (savedTheme === 'light') {
-    document.documentElement.classList.remove('dark');
-  } else {
-    document.documentElement.classList.add('dark');
-  }
+  // Design is light-first; ensure no stale dark class remains.
+  document.documentElement.classList.remove('dark');
+  localStorage.setItem('drive-theme', 'light');
   updateThemeIcon();
 
   $('#btn-theme').addEventListener('click', () => {
@@ -833,8 +1030,8 @@
 
   function updateThemeIcon() {
     const isDark = document.documentElement.classList.contains('dark');
-    $('#ic-sun').classList.toggle('hidden', !isDark);
-    $('#ic-moon').classList.toggle('hidden', isDark);
+    $('#ic-sun').classList.toggle('hidden', isDark);
+    $('#ic-moon').classList.toggle('hidden', !isDark);
   }
 
   /* ===================================================================
@@ -866,30 +1063,150 @@
 
   let uploadQueue = [];
   let isUploadingActive = false;
+  let isUploadPanelCollapsed = false;
+
+  function createUploadItemHTML(uploadId, filename, initialStatus) {
+    const ext = getExt(filename);
+    const isImg = isImageByFilename(filename);
+    const cat = isImg ? 'image' : 'document';
+    const icon = catIconSvg(cat);
+    return `
+      <div class="up-item py-2 first:pt-0 last:pb-0 border-b border-cloud last:border-b-0" id="${uploadId}">
+        <div class="up-row flex items-center justify-between gap-3">
+          <div class="flex items-center gap-2 overflow-hidden flex-1">
+            <span class="w-4 h-4 text-textDark shrink-0">${icon}</span>
+            <div class="flex flex-col overflow-hidden">
+              <span class="text-xs font-medium text-textDark truncate pr-1" title="${filename}">${filename}</span>
+              <span class="text-[10px] text-textGray font-medium mt-0.5 up-status">${initialStatus}</span>
+            </div>
+          </div>
+          <div class="shrink-0 flex items-center justify-center">
+            <button class="up-cancel-btn text-textGray hover:text-textDark transition rounded-full hover:bg-paper p-1 flex items-center justify-center focus:outline-none" data-id="${uploadId}" title="Batalkan unggahan">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-3.5 h-3.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+            <span class="up-success-icon hidden text-emerald-600">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" class="w-4 h-4"><polyline points="20 6 9 17 4 12"/></svg>
+            </span>
+          </div>
+        </div>
+        <div class="w-full bg-cloud h-1 rounded-full overflow-hidden mt-1.5 up-bar">
+          <div class="bg-obsidian h-full rounded-full transition-all duration-300 up-fill" style="width: 0%;"></div>
+        </div>
+      </div>
+    `;
+  }
+
+  function updateUploadPanelHeader() {
+    const activeCount = uploadQueue.length + (isUploadingActive ? 1 : 0);
+    const titleEl = $('#upload-panel-title');
+    const pingEl = $('#upload-panel-ping');
+    
+    if (titleEl) {
+      if (activeCount > 0) {
+        titleEl.textContent = `Mengunggah ${activeCount} item...`;
+      } else {
+        titleEl.textContent = `Upload selesai`;
+      }
+    }
+    if (pingEl) {
+      if (activeCount > 0) {
+        pingEl.classList.remove('hidden');
+      } else {
+        pingEl.classList.add('hidden');
+      }
+    }
+  }
+
+  function toggleUploadPanel(collapse) {
+    const panel = $('#upload-panel');
+    const items = $('#upload-items');
+    const chevron = $('#upload-chevron');
+    
+    if (collapse !== undefined) {
+      isUploadPanelCollapsed = collapse;
+    } else {
+      isUploadPanelCollapsed = !isUploadPanelCollapsed;
+    }
+    
+    if (isUploadPanelCollapsed) {
+      if (items) items.classList.add('hidden');
+      if (panel) panel.style.maxHeight = '42px'; // Header height only
+      if (chevron) chevron.classList.add('rotate-180');
+    } else {
+      if (items) items.classList.remove('hidden');
+      if (panel) panel.style.maxHeight = '300px';
+      if (chevron) chevron.classList.remove('rotate-180');
+    }
+  }
+
+  // Setup panel toggle event listeners
+  const panelHeader = $('#upload-panel-header');
+  if (panelHeader) {
+    panelHeader.addEventListener('click', e => {
+      if (e.target.closest('#upload-panel-close') || e.target.closest('#upload-panel-toggle') || e.target.closest('.up-cancel-btn')) return;
+      toggleUploadPanel();
+    });
+  }
+  const panelToggle = $('#upload-panel-toggle');
+  if (panelToggle) {
+    panelToggle.addEventListener('click', e => {
+      e.stopPropagation();
+      toggleUploadPanel();
+    });
+  }
 
   function uploadFiles(fileList) {
+    if (uploadQueue.length === 0 && !isUploadingActive) {
+      uploadItems.innerHTML = '';
+    }
     uploadPanel.classList.remove('hidden');
-    [...fileList].forEach(f => uploadQueue.push(f));
+    toggleUploadPanel(false); // Expand
+    
+    [...fileList].forEach(f => {
+      const uploadId = 'up-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5);
+      f._uploadId = uploadId;
+      uploadQueue.push(f);
+      
+      const displayName = f.webkitRelativePath || f.name;
+      uploadItems.insertAdjacentHTML('beforeend', createUploadItemHTML(uploadId, displayName, 'Mengantre...'));
+    });
+    updateUploadPanelHeader();
     processNextUpload();
   }
 
   function processNextUpload() {
+    updateUploadPanelHeader();
     if (isUploadingActive || uploadQueue.length === 0) return;
-    isUploadingActive = true;
+    
+    // Check if the next item is already cancelled
     const file = uploadQueue.shift();
+    const uploadId = file._uploadId;
+    const itemEl = document.getElementById(uploadId);
+    
+    if (itemEl && itemEl.querySelector('.up-status').textContent === 'Dibatalkan') {
+      processNextUpload();
+      return;
+    }
+
+    isUploadingActive = true;
+    updateUploadPanelHeader();
 
     const displayName = file.webkitRelativePath || file.name;
     const exists = allFiles.some(f => f.filename === displayName && f.total_size === file.size);
 
     if (exists) {
       toast(`Dilewati: "${displayName}" sudah ada.`);
-      const uploadId = 'up-skip-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5);
-      uploadItems.insertAdjacentHTML('beforeend', `
-        <div class="up-item" id="${uploadId}">
-          <div class="up-row"><span class="up-name">${displayName}</span><span class="up-status">Dilewati (sudah ada)</span></div>
-          <div class="up-bar"><div class="up-fill" style="width: 100%; background: var(--border-color);"></div></div>
-        </div>
-      `);
+      if (itemEl) {
+        const statusEl = itemEl.querySelector('.up-status');
+        const fillEl = itemEl.querySelector('.up-fill');
+        const btn = itemEl.querySelector('.up-cancel-btn');
+        if (statusEl) statusEl.textContent = 'Dilewati (sudah ada)';
+        if (fillEl) {
+          fillEl.style.width = '100%';
+          fillEl.style.backgroundColor = 'var(--border-color)';
+        }
+        if (btn) btn.classList.add('hidden');
+      }
       setTimeout(() => {
         isUploadingActive = false;
         processNextUpload();
@@ -897,89 +1214,209 @@
       return;
     }
 
-    uploadSingle(file, () => {
+    uploadSingle(file, uploadId, () => {
       isUploadingActive = false;
       processNextUpload();
     });
   }
 
-  function uploadSingle(file, onComplete) {
-    const uploadId = 'up-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5);
+  function uploadSingle(file, uploadId, onComplete) {
     const displayName = file.webkitRelativePath || file.name;
-    uploadItems.insertAdjacentHTML('beforeend', `
-      <div class="up-item" id="${uploadId}">
-        <div class="up-row"><span class="up-name">${displayName}</span><span class="up-status">Mengantre...</span></div>
-        <div class="up-bar"><div class="up-fill" style="width: 0%;"></div></div>
-      </div>
-    `);
+    const itemEl = document.getElementById(uploadId);
+    if (!itemEl) {
+      if (onComplete) onComplete();
+      return;
+    }
 
     const form = new FormData();
     form.append('file', file, displayName);
 
     const xhr = new XMLHttpRequest();
-    const itemEl = document.getElementById(uploadId);
     let sse = null;
+    let safetyTimeout = null;
 
-    xhr.upload.addEventListener('progress', e => {
-      if (e.lengthComputable) {
-        const pct = Math.round((e.loaded / e.total) * 100);
-        itemEl.querySelector('.up-fill').style.width = (pct * 0.1) + '%'; // Browser-to-server represents 10%
-        itemEl.querySelector('.up-status').textContent = `Mengunggah ke Server: ${pct}%`;
+    activeXHRs.set(uploadId, { xhr, sse, file });
+
+    const resetSafetyTimeout = () => {
+      if (safetyTimeout) clearTimeout(safetyTimeout);
+      safetyTimeout = setTimeout(() => {
+        console.warn(`Upload timeout for ${displayName}. Forcing skip to next file.`);
+        toast(`Unggahan "${displayName}" melewati waktu tunggu (5 menit). Melanjutkan...`);
+        cleanupAndComplete('timeout');
+      }, 300000); // 5 minutes
+    };
+
+    const cleanupAndComplete = (reason = '') => {
+      if (safetyTimeout) {
+        clearTimeout(safetyTimeout);
+        safetyTimeout = null;
       }
-    });
+      if (sse) {
+        sse.close();
+        sse = null;
+      }
+      try {
+        if (xhr.readyState !== 0 && xhr.readyState !== 4) {
+          xhr.abort();
+        }
+      } catch (e) {}
 
-    xhr.addEventListener('load', () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        itemEl.querySelector('.up-status').textContent = 'Memproses di Telegram...';
-        sse = new EventSource(`/api/upload-progress/${uploadId}`);
-        sse.onmessage = ev => {
-          try {
-            const data = JSON.parse(ev.data);
-            if (data.status === 'uploading') {
-              const pct = Math.round(data.uploaded); // uploaded is 0-100 from GramJS
-              itemEl.querySelector('.up-fill').style.width = (10 + (pct * 0.9)) + '%'; // Telegram upload represents 90%
-              itemEl.querySelector('.up-status').textContent = `Mengirim ke Telegram: ${pct}%`;
-            } else if (data.status === 'done') {
-              itemEl.querySelector('.up-status').textContent = '✓ Selesai';
-              itemEl.querySelector('.up-fill').style.width = '100%';
-              itemEl.querySelector('.up-fill').style.background = 'var(--success)';
-              sse.close();
-              loadFiles();
-              loadStats();
-              if (onComplete) onComplete();
-            } else if (data.status === 'error') {
-              itemEl.querySelector('.up-status').textContent = 'Upload gagal ke Telegram';
-              itemEl.querySelector('.up-fill').style.background = 'var(--danger)';
-              sse.close();
-              if (onComplete) onComplete();
+      activeXHRs.delete(uploadId);
+
+      const fillEl = itemEl.querySelector('.up-fill');
+      const statusEl = itemEl.querySelector('.up-status');
+      const cancelBtn = itemEl.querySelector('.up-cancel-btn');
+      const successIcon = itemEl.querySelector('.up-success-icon');
+      
+      if (cancelBtn) cancelBtn.classList.add('hidden');
+
+      if (reason === 'timeout') {
+        if (statusEl) statusEl.textContent = 'Timeout (Dilewati)';
+        if (fillEl) {
+          fillEl.style.width = '100%';
+          fillEl.style.backgroundColor = 'var(--danger)';
+        }
+      } else if (reason === 'done') {
+        if (statusEl) statusEl.textContent = '✓ Selesai';
+        if (fillEl) {
+          fillEl.style.width = '100%';
+          fillEl.style.backgroundColor = 'var(--success)';
+        }
+        if (successIcon) successIcon.classList.remove('hidden');
+      } else if (reason === 'cancelled') {
+        if (statusEl) statusEl.textContent = 'Dibatalkan';
+        if (fillEl) {
+          fillEl.style.width = '100%';
+          fillEl.style.backgroundColor = 'var(--danger)';
+        }
+      } else if (reason === 'error') {
+        if (statusEl) statusEl.textContent = 'Gagal';
+        if (fillEl) {
+          fillEl.style.width = '100%';
+          fillEl.style.backgroundColor = 'var(--danger)';
+        }
+      }
+
+      updateUploadPanelHeader();
+
+      if (onComplete) {
+        const cb = onComplete;
+        onComplete = null; // Prevent double trigger
+        cb();
+      }
+    };
+
+    try {
+      resetSafetyTimeout();
+
+      xhr.upload.addEventListener('progress', e => {
+        resetSafetyTimeout();
+        if (e.lengthComputable) {
+          const pct = Math.round((e.loaded / e.total) * 100);
+          itemEl.querySelector('.up-fill').style.width = (pct * 0.1) + '%'; // Browser-to-server represents 10%
+          itemEl.querySelector('.up-status').textContent = `Mengunggah ke Server: ${pct}%`;
+        }
+      });
+
+      xhr.addEventListener('load', () => {
+        resetSafetyTimeout();
+        if (xhr.status >= 200 && xhr.status < 300) {
+          itemEl.querySelector('.up-status').textContent = 'Memproses di Telegram...';
+          sse = new EventSource(`/api/upload-progress/${uploadId}`);
+          
+          // Store sse in activeXHRs as well
+          const act = activeXHRs.get(uploadId);
+          if (act) act.sse = sse;
+
+          sse.onmessage = ev => {
+            resetSafetyTimeout();
+            try {
+              const data = JSON.parse(ev.data);
+              if (data.status === 'uploading') {
+                const pct = Math.round(data.uploaded); // uploaded is 0-100 from GramJS
+                itemEl.querySelector('.up-fill').style.width = (10 + (pct * 0.9)) + '%'; // Telegram upload represents 90%
+                itemEl.querySelector('.up-status').textContent = `Mengirim ke Telegram: ${pct}%`;
+              } else if (data.status === 'done') {
+                loadFiles();
+                loadStats();
+                cleanupAndComplete('done');
+              } else if (data.status === 'error') {
+                cleanupAndComplete('error');
+              }
+            } catch (err) {
+              console.error('SSE JSON parse error:', err);
             }
-          } catch (err) {}
-        };
-        sse.onerror = () => {
-          sse.close();
-          if (onComplete) onComplete();
-        };
-      } else {
-        itemEl.querySelector('.up-status').textContent = 'Gagal upload ke server';
-        itemEl.querySelector('.up-fill').style.background = 'var(--danger)';
-        if (onComplete) onComplete();
-      }
-    });
+          };
+          sse.onerror = () => {
+            cleanupAndComplete('error');
+          };
+        } else {
+          cleanupAndComplete('error');
+        }
+      });
 
-    xhr.addEventListener('error', () => {
-      itemEl.querySelector('.up-status').textContent = 'Koneksi error';
-      itemEl.querySelector('.up-fill').style.background = 'var(--danger)';
-      if (onComplete) onComplete();
-    });
+      xhr.addEventListener('error', () => {
+        cleanupAndComplete('error');
+      });
 
-    xhr.open('POST', '/api/upload');
-    xhr.setRequestHeader('X-Upload-Id', uploadId);
-    xhr.send(form);
+      xhr.addEventListener('abort', () => {
+        cleanupAndComplete('cancelled');
+      });
+
+      xhr.open('POST', '/api/upload');
+      xhr.setRequestHeader('X-Upload-Id', uploadId);
+      xhr.send(form);
+    } catch (err) {
+      console.error('XHR start error:', err);
+      cleanupAndComplete('error');
+    }
   }
 
-  $('#upload-panel-close').addEventListener('click', () => {
+  function cancelUpload(uploadId) {
+    const active = activeXHRs.get(uploadId);
+    if (active) {
+      try {
+        if (active.xhr) active.xhr.abort();
+        if (active.sse) active.sse.close();
+      } catch (e) {}
+      toast(`Membatalkan "${active.file.name}"...`);
+    } else {
+      const idx = uploadQueue.findIndex(f => f._uploadId === uploadId);
+      if (idx !== -1) {
+        const itemEl = document.getElementById(uploadId);
+        if (itemEl) {
+          const statusEl = itemEl.querySelector('.up-status');
+          const fillEl = itemEl.querySelector('.up-fill');
+          const btn = itemEl.querySelector('.up-cancel-btn');
+          if (statusEl) statusEl.textContent = 'Dibatalkan';
+          if (fillEl) {
+            fillEl.style.width = '100%';
+            fillEl.style.backgroundColor = 'var(--danger)';
+          }
+          if (btn) btn.classList.add('hidden');
+        }
+        uploadQueue.splice(idx, 1);
+        updateUploadPanelHeader();
+        toast('Antrean unggahan dibatalkan.');
+      }
+    }
+  }
+
+  // Handle click on cancel buttons in panel
+  if (uploadItems) {
+    uploadItems.addEventListener('click', e => {
+      const btn = e.target.closest('.up-cancel-btn');
+      if (btn) {
+        e.stopPropagation();
+        const uploadId = btn.dataset.id;
+        cancelUpload(uploadId);
+      }
+    });
+  }
+
+  $('#upload-panel-close').addEventListener('click', e => {
+    e.stopPropagation();
     uploadPanel.classList.add('hidden');
-    uploadItems.innerHTML = '';
   });
 
   async function syncBackgroundUploads() {
@@ -988,26 +1425,28 @@
       const uploads = await res.json();
       
       const keys = Object.keys(uploads);
-      if (keys.length === 0) return;
+      if (keys.length === 0) {
+        updateUploadPanelHeader();
+        return;
+      }
 
       uploadPanel.classList.remove('hidden');
 
       keys.forEach(uploadId => {
+        if (activeXHRs.has(uploadId)) return;
+
         const data = uploads[uploadId];
         let itemEl = document.getElementById(uploadId);
         
         if (!itemEl) {
-          uploadItems.insertAdjacentHTML('beforeend', `
-            <div class="up-item" id="${uploadId}">
-              <div class="up-row"><span class="up-name">${data.filename}</span><span class="up-status">Mengantre...</span></div>
-              <div class="up-bar"><div class="up-fill" style="width: 0%;"></div></div>
-            </div>
-          `);
+          uploadItems.insertAdjacentHTML('beforeend', createUploadItemHTML(uploadId, data.filename, 'Mengantre...'));
           itemEl = document.getElementById(uploadId);
         }
 
         const fillEl = itemEl.querySelector('.up-fill');
         const statusEl = itemEl.querySelector('.up-status');
+        const cancelBtn = itemEl.querySelector('.up-cancel-btn');
+        const successIcon = itemEl.querySelector('.up-success-icon');
 
         if (data.status === 'uploading') {
           const pct = Math.round(data.uploaded);
@@ -1016,12 +1455,16 @@
         } else if (data.status === 'done') {
           statusEl.textContent = '✓ Selesai';
           fillEl.style.width = '100%';
-          fillEl.style.background = 'var(--success)';
+          fillEl.style.backgroundColor = 'var(--success)';
+          if (cancelBtn) cancelBtn.classList.add('hidden');
+          if (successIcon) successIcon.classList.remove('hidden');
         } else if (data.status === 'error') {
           statusEl.textContent = 'Upload gagal ke Telegram';
-          fillEl.style.background = 'var(--danger)';
+          fillEl.style.backgroundColor = 'var(--danger)';
+          if (cancelBtn) cancelBtn.classList.add('hidden');
         }
       });
+      updateUploadPanelHeader();
     } catch (err) {
       console.log("Failed to sync background uploads:", err);
     }
@@ -1053,7 +1496,9 @@
     const a = document.createElement('a');
     a.href = `/api/download/${f.file_key}`;
     a.download = f.filename;
+    document.body.appendChild(a);
     a.click();
+    document.body.removeChild(a);
   }
 
   async function deleteFile(f) {
@@ -1087,13 +1532,17 @@
 
     lightboxFile = f;
     lightbox.classList.remove('hidden');
+    // Force reflow
+    lightbox.offsetHeight;
+    lightbox.classList.add('active');
+    
     document.body.style.overflow = 'hidden';
 
     // Reset lightbox loader elements
     $('#lb-loading').classList.remove('hidden');
     $('#lb-img').classList.add('hidden');
     $('#lb-video').classList.add('hidden');
-    $('#lb-audio').classList.add('hidden');
+    $('#lb-audio-container').classList.add('hidden');
     $('#lb-pdf').classList.add('hidden');
     $('#lb-text').classList.add('hidden');
     $('#lb-nopreview').classList.add('hidden');
@@ -1102,6 +1551,18 @@
     $('#lb-size').textContent = formatSize(f.total_size);
     $('#lb-download').href = `/api/download/${f.file_key}`;
     $('#lb-download-original').href = `/api/download-original/${f.file_key}`;
+
+    // Set Header Title & Icon
+    const titleIcon = $('#lb-title-icon');
+    const titleText = $('#lb-title-text');
+    const catIcons = {
+      image: `<svg class="w-5 h-5 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>`,
+      video: `<svg class="w-5 h-5 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/></svg>`,
+      audio: `<svg class="w-5 h-5 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>`,
+      document: `<svg class="w-5 h-5 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>`
+    };
+    if (titleIcon) titleIcon.innerHTML = catIcons[f.category] || catIcons.document;
+    if (titleText) titleText.textContent = `[ PRATINJAU: ${f.category.toUpperCase()} ]`;
 
     // Show/hide Slider Buttons
     const idx = visibleFiles.findIndex(item => item.file_key === f.file_key);
@@ -1156,9 +1617,25 @@
       vid.onerror = () => { $('#lb-loading').classList.add('hidden'); $('#lb-nopreview').classList.remove('hidden'); };
     } else if (f.category === 'audio') {
       const aud = $('#lb-audio');
+      const disc = $('#audio-disc');
       aud.src = streamUrl;
-      aud.onloadeddata = () => { $('#lb-loading').classList.add('hidden'); aud.classList.remove('hidden'); };
-      aud.onerror = () => { $('#lb-loading').classList.add('hidden'); $('#lb-nopreview').classList.remove('hidden'); };
+      $('#lb-audio-container').classList.remove('hidden');
+      $('#lb-audio-title').textContent = f.filename;
+      $('#lb-audio-size').textContent = formatSize(f.total_size);
+      
+      if (disc) {
+        disc.style.animationPlayState = 'paused';
+        aud.onplay = () => { disc.style.animationPlayState = 'running'; };
+        aud.onpause = () => { disc.style.animationPlayState = 'paused'; };
+        aud.onended = () => { disc.style.animationPlayState = 'paused'; };
+      }
+      
+      aud.onloadeddata = () => { $('#lb-loading').classList.add('hidden'); };
+      aud.onerror = () => {
+        $('#lb-loading').classList.add('hidden');
+        $('#lb-audio-container').classList.add('hidden');
+        $('#lb-nopreview').classList.remove('hidden');
+      };
     } else if (ext === 'pdf') {
       const pdf = $('#lb-pdf');
       pdf.src = previewUrl;
@@ -1186,15 +1663,22 @@
   }
 
   function closeLightbox() {
-    lightbox.classList.add('hidden');
+    lightbox.classList.remove('active');
     document.body.style.overflow = '';
     
-    // Cleanup media elements to halt playback
-    const vid = $('#lb-video'); vid.pause(); vid.removeAttribute('src'); vid.load();
-    const aud = $('#lb-audio'); aud.pause(); aud.removeAttribute('src'); aud.load();
-    $('#lb-img').removeAttribute('src');
-    $('#lb-pdf').removeAttribute('src');
-    $('#lb-text').textContent = '';
+    // Cleanup media elements to halt playback after transition
+    setTimeout(() => {
+      if (!lightbox.classList.contains('active')) {
+        lightbox.classList.add('hidden');
+        const vid = $('#lb-video'); vid.pause(); vid.removeAttribute('src'); vid.load();
+        const aud = $('#lb-audio'); aud.pause(); aud.removeAttribute('src'); aud.load();
+        $('#lb-audio-container').classList.add('hidden');
+        $('#lb-img').removeAttribute('src');
+        $('#lb-pdf').removeAttribute('src');
+        $('#lb-text').textContent = '';
+      }
+    }, 250);
+    
     lightboxFile = null;
   }
 
@@ -1282,7 +1766,9 @@
         const a = document.createElement('a');
         a.href = `/api/download/${f.file_key}`;
         a.download = f.filename;
+        document.body.appendChild(a);
         a.click();
+        document.body.removeChild(a);
       }, index * 400); // 400ms delay to prevent browser blockages
     });
   });
