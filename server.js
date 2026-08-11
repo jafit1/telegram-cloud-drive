@@ -734,8 +734,9 @@ app.post('/api/auth/send-code', async (req, res) => {
   apiHash = apiHash.trim();
 
   try {
-    console.log(`Initiating login for phone: ${phone}...`);
-    db.logActivity('Auth', `Memulai login untuk nomor telepon ${phone}`);
+    console.log('Initiating Telegram login...');
+    // Note: no raw phone in db.logActivity — the log may be world-visible.
+    db.logActivity('Auth', 'Memulai proses login Telegram.');
 
     const tempSession = new StringSession('');
     const tempClient = new TelegramClient(tempSession, parsedApiId, apiHash, {
@@ -754,11 +755,11 @@ app.post('/api/auth/send-code', async (req, res) => {
     const authId = 'auth-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5);
     activeAuths.set(authId, { client: tempClient, phone, apiId: parsedApiId, apiHash, phoneCodeHash, createdAt: Date.now() });
 
-    db.logActivity('Auth', `Kode OTP dikirim ke akun Telegram untuk nomor ${phone}`);
+    db.logActivity('Auth', 'Kode OTP dikirim ke akun Telegram.');
     res.json({ success: true, authId });
   } catch (err) {
     console.error('Failed to send OTP code:', err);
-    db.logActivity('Auth', `Gagal mengirim kode OTP ke ${phone}: ${err.message}`, 'error');
+    db.logActivity('Auth', 'Kode OTP gagal dikirim ke akun Telegram: ' + err.message, 'error');
     res.status(500).json({ error: err.message });
   }
 });
@@ -772,7 +773,8 @@ app.post('/api/auth/sign-in', async (req, res) => {
   if (!auth) return res.status(400).json({ error: 'Sesi otentikasi kedaluwarsa atau tidak ditemukan.' });
 
   try {
-    console.log(`Signing in for phone: ${auth.phone} with code: ${code}...`);
+    // The OTP code is a live credential — never print it.
+    console.log('Signing in with submitted OTP code...');
 
     // Reconnect temp client if disconnected (common on slow OTP entry)
     if (!auth.client.connected) {
@@ -842,7 +844,7 @@ app.post('/api/auth/sign-in', async (req, res) => {
     saveConfigToFile();
     activeAuths.delete(authId);
 
-    db.logActivity('Auth', `Akun ${auth.phone} berhasil login ke cloud drive.`);
+    db.logActivity('Auth', 'Akun Telegram berhasil login ke cloud drive.');
     res.json({ success: true });
   } catch (err) {
     console.error('Sign in failed:', err);
