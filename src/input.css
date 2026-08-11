@@ -1,0 +1,5 @@
+/* Tailwind entry point — see tailwind.config.js for why this is optional.
+   The shipped stylesheet is public/css/app.css (hand-maintained + committed). */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;

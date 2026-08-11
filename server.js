@@ -2,10 +2,12 @@ const express = require('express');
 const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
+const { pipeline } = require('stream/promises');
 const { TelegramClient, Api } = require('telegram');
 const { StringSession } = require('telegram/sessions');
 const { computeCheck } = require('telegram/Password');
 const db = require('./database');
+const auth = require('./auth');
 
 // Try to load Sharp for image compression
 let sharp = null;
@@ -23,8 +25,19 @@ const PORT = process.env.PORT || 3000;
 const dataDir = process.env.DATA_DIR || __dirname;
 
 // Middleware
+// Railway terminates TLS at its edge, so honour X-Forwarded-For for
+// per-IP login throttling and Secure cookies.
+app.set('trust proxy', 1);
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+
+// ── Auth routes (must be registered before the /api gate) ──
+app.post('/api/auth/login', auth.loginHandler);
+app.post('/api/auth/logout', auth.logoutHandler);
+app.get('/api/auth/status', auth.statusHandler);
+
+// ── Gate: every other /api/* route requires a valid session ──
+app.use('/api', auth.requireAuth);
 
 // Directories — all under dataDir for Railway volume persistence
 const tempDir = path.join(dataDir, 'temp');
@@ -83,8 +96,59 @@ let keepAliveInterval = null;
 let sessionSaveInterval = null;
 let isReconnecting = false;
 
-// Temporary authentication sessions map
+// ── Telegram auth-key health ────────────────────────────────
+// `client.connected` only tells us the TCP socket is up; it says nothing
+// about whether Telegram still honours our auth key. A revoked key keeps
+// connecting happily and then fails mid-upload with AUTH_KEY_UNREGISTERED,
+// which is exactly how uploads broke silently. Track the real state here.
+//   'ok'      — a request succeeded recently
+//   'revoked' — Telegram rejected our key; only a fresh login fixes it
+//   'unknown' — not yet proven either way
+let telegramAuthState = config.sessionString ? 'unknown' : 'none';
+
+const REVOCATION_PATTERN = /AUTH_KEY_UNREGISTERED|AUTH_KEY_INVALID|AUTH_KEY_DUPLICATED|SESSION_REVOKED|SESSION_EXPIRED|USER_DEACTIVATED/i;
+
+function isRevocationError(err) {
+  if (!err) return false;
+  return REVOCATION_PATTERN.test(String(err.message || err.errorMessage || err));
+}
+
+const SESSION_REVOKED_MESSAGE =
+  'Sesi Telegram sudah berakhir dan dicabut oleh Telegram. Buka Pengaturan, ' +
+  'lalu hubungkan ulang akun Anda (login OTP) untuk memakai drive kembali.';
+
+// Called from anywhere a Telegram request fails. Returns true when the
+// failure was a revocation, so callers can answer 409 instead of 500.
+function markRevokedIfNeeded(err, context) {
+  if (!isRevocationError(err)) return false;
+  if (telegramAuthState !== 'revoked') {
+    telegramAuthState = 'revoked';
+    if (keepAliveInterval) { clearInterval(keepAliveInterval); keepAliveInterval = null; }
+    const detail = String(err.message || err);
+    console.error(`Telegram session revoked (${context}): ${detail}`);
+    try {
+      db.logActivity('System', `Sesi Telegram dicabut (${context}): ${detail}. Login ulang diperlukan.`, 'error');
+    } catch {}
+  }
+  return true;
+}
+
+// Temporary authentication sessions map.
+// Entries hold a live TelegramClient, so abandoned logins must be reaped
+// or they keep a connection open forever.
 const activeAuths = new Map();
+const AUTH_TTL_MS = 10 * 60 * 1000; // OTP codes expire well before this
+
+setInterval(async () => {
+  const now = Date.now();
+  for (const [authId, entry] of activeAuths) {
+    if (now - (entry.createdAt || 0) > AUTH_TTL_MS) {
+      activeAuths.delete(authId);
+      try { await entry.client?.disconnect(); } catch {}
+      console.log(`Reaped abandoned auth session: ${authId}`);
+    }
+  }
+}, 60 * 1000).unref();
 
 // Upload progress map
 const uploadProgress = new Map();
@@ -95,22 +159,34 @@ const uploadProgress = new Map();
 async function initTelegram() {
   if (config.apiId && config.apiHash && config.sessionString) {
     console.log('Initializing Telegram client from saved session...');
-    const isAndroidKey = parseInt(config.apiId) === 6;
     client = new TelegramClient(
       new StringSession(config.sessionString),
       parseInt(config.apiId),
       config.apiHash,
       {
         connectionRetries: 10,
-        deviceModel: isAndroidKey ? 'Android' : 'Webogram',
-        systemVersion: isAndroidKey ? '11.0' : '1.0',
-        appVersion: isAndroidKey ? '8.4.1' : '1.0'
+        deviceModel: 'Android',
+        systemVersion: '11.0',
+        appVersion: '8.4.1'
       }
     );
     try {
       await client.connect();
       console.log('Telegram client connected successfully.');
-      db.logActivity('System', 'Telegram client connected successfully on startup');
+
+      // Connecting proves nothing about the auth key, so make one real request.
+      // This is what turns a silent mid-upload failure into a startup diagnosis.
+      try {
+        await client.invoke(new Api.users.GetFullUser({ id: 'me' }));
+        telegramAuthState = 'ok';
+        db.logActivity('System', 'Telegram client connected successfully on startup');
+      } catch (probeErr) {
+        if (markRevokedIfNeeded(probeErr, 'startup probe')) {
+          console.error('  -> Login ulang lewat Pengaturan diperlukan. Upload akan ditolak sampai itu dilakukan.');
+          return; // no keep-alive, no reconnect — neither can help
+        }
+        console.warn('Startup probe failed (non-fatal):', probeErr.message);
+      }
 
       // Start keep-alive ping every 60 seconds
       startKeepAlive();
@@ -120,6 +196,7 @@ async function initTelegram() {
     } catch (err) {
       console.error('Failed to connect Telegram client:', err);
       db.logActivity('System', 'Failed to connect Telegram client: ' + err.message, 'error');
+      if (markRevokedIfNeeded(err, 'startup')) return;
       // Schedule auto-reconnect
       scheduleReconnect();
     }
@@ -133,18 +210,28 @@ initTelegram();
 // RECONNECT & KEEP-ALIVE
 // ============================================================
 async function ensureConnection() {
+  if (telegramAuthState === 'revoked') {
+    const err = new Error(SESSION_REVOKED_MESSAGE);
+    err.sessionRevoked = true;
+    throw err;
+  }
   if (client && client.connected) return true;
-  if (isReconnecting) return false;
+  if (isReconnecting) {
+    if (!client || !client.connected) {
+      throw new Error('Telegram Client sedang menghubungkan kembali. Silakan coba sesaat lagi.');
+    }
+    return true;
+  }
 
   isReconnecting = true;
   let attempt = 0;
-  const maxAttempts = 20;
-  const baseDelay = 2000; // 2 seconds
+  const maxAttempts = 5;
+  const baseDelay = 1000;
 
   while (attempt < maxAttempts) {
     attempt++;
     try {
-      if (!client) return false;
+      if (!client) throw new Error('Telegram Client belum diinisialisasi.');
       await client.connect();
       if (client.connected) {
         console.log(`Reconnected successfully after ${attempt} attempt(s).`);
@@ -153,15 +240,21 @@ async function ensureConnection() {
         return true;
       }
     } catch (err) {
-      const delay = Math.min(baseDelay * Math.pow(2, attempt - 1), 60000); // Exponential backoff, max 60s
+      if (isRevocationError(err)) {
+        isReconnecting = false;
+        markRevokedIfNeeded(err, 'reconnect');
+        const revoked = new Error(SESSION_REVOKED_MESSAGE);
+        revoked.sessionRevoked = true;
+        throw revoked;
+      }
+      const delay = Math.min(baseDelay * Math.pow(2, attempt - 1), 10000);
       console.log(`Reconnect attempt ${attempt}/${maxAttempts} failed: ${err.message}. Retrying in ${delay/1000}s...`);
       await new Promise(r => setTimeout(r, delay));
     }
   }
 
-  console.error('Reconnection failed after max attempts.');
   isReconnecting = false;
-  return false;
+  throw new Error('Gagal menghubungkan ke Telegram setelah beberapa percobaan.');
 }
 
 function startKeepAlive() {
@@ -171,9 +264,14 @@ function startKeepAlive() {
       try {
         // Simple ping — invoke getMe to test the connection
         await client.invoke(new Api.users.GetFullUser({ id: 'me' }));
+        telegramAuthState = 'ok';
       } catch (err) {
+        // A revoked auth key cannot be recovered by reconnecting — the socket
+        // will come back up and every request will keep failing. Stop here and
+        // surface it instead of looping forever.
+        if (markRevokedIfNeeded(err, 'keep-alive')) return;
         console.log('Keep-alive ping failed, initiating reconnect...', err.message);
-        if (keepAliveInterval) clearInterval(keepAliveInterval);
+        if (keepAliveInterval) { clearInterval(keepAliveInterval); keepAliveInterval = null; }
         scheduleReconnect();
       }
     }
@@ -182,10 +280,18 @@ function startKeepAlive() {
 
 function scheduleReconnect() {
   if (isReconnecting) return;
+  if (telegramAuthState === 'revoked') return;
   isReconnecting = true;
   console.log('Scheduling auto-reconnect in 5 seconds...');
-  setTimeout(async () => {
-    await ensureConnection();
+  setTimeout(() => {
+    // ensureConnection() throws while isReconnecting is set, so the flag has to
+    // be cleared before calling it. The .catch() matters just as much: an
+    // unhandled rejection in here terminates the process on Node 22+.
+    isReconnecting = false;
+    ensureConnection().catch(err => {
+      markRevokedIfNeeded(err, 'reconnect');
+      console.error('Auto-reconnect failed:', err.message);
+    });
   }, 5000);
 }
 
@@ -245,6 +351,9 @@ process.on('uncaughtException', (err) => {
 });
 process.on('unhandledRejection', (reason) => {
   console.error('Unhandled Rejection:', reason);
+  // A revocation surfacing here would otherwise be swallowed silently, leaving
+  // the drive "connected" but unable to transfer anything.
+  markRevokedIfNeeded(reason, 'unhandled rejection');
 });
 
 function saveConfigToFile() {
@@ -286,6 +395,208 @@ function getSmallestThumb(media) {
     return areaA - areaB;
   });
   return sorted[0];
+}
+
+function getMimeTypeByFilename(filename) {
+  const ext = path.extname(filename).toLowerCase();
+  const mimeMap = {
+    '.mp4': 'video/mp4',
+    '.mkv': 'video/x-matroska',
+    '.avi': 'video/x-msvideo',
+    '.mov': 'video/quicktime',
+    '.wmv': 'video/x-ms-wmv',
+    '.mp3': 'audio/mpeg',
+    '.wav': 'audio/wav',
+    '.ogg': 'audio/ogg',
+    '.pdf': 'application/pdf',
+    '.txt': 'text/plain',
+    '.zip': 'application/zip',
+    '.rar': 'application/x-rar-compressed',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.webp': 'image/webp'
+  };
+  return mimeMap[ext] || 'application/octet-stream';
+}
+
+function groupSplitFiles(files) {  const groups = new Map(); // baseName -> Array of files
+  const nonParts = [];
+
+  files.forEach(f => {
+    const match = f.filename.match(/(.+)\.part(\d+)$/i);
+    if (match) {
+      const baseName = match[1];
+      const partNum = parseInt(match[2]);
+      if (!groups.has(baseName)) {
+        groups.set(baseName, []);
+      }
+      groups.get(baseName).push({ partNum, file: f });
+    } else {
+      nonParts.push(f);
+    }
+  });
+
+  const result = [...nonParts];
+
+  groups.forEach((partList, baseName) => {
+    partList.sort((a, b) => a.partNum - b.partNum);
+    
+    const firstPart = partList[0].file;
+    const totalSize = partList.reduce((sum, p) => sum + p.file.total_size, 0);
+    const mimeType = getMimeTypeByFilename(baseName) || firstPart.mime_type;
+    const category = getCategory(baseName, mimeType);
+
+    result.push({
+      id: firstPart.id,
+      file_key: firstPart.file_key, // Use part1's file_key
+      filename: baseName,
+      mime_type: mimeType,
+      category: category,
+      total_size: totalSize,
+      uploaded_at: firstPart.uploaded_at,
+      telegram_media_id: firstPart.telegram_media_id,
+      access_hash: firstPart.access_hash,
+      file_reference: firstPart.file_reference,
+      telegram_thumb_id: firstPart.telegram_thumb_id,
+      dc_id: firstPart.dc_id,
+      is_split: true,
+      parts: partList.map(p => p.file)
+    });
+  });
+
+  return result;
+}
+
+function resolveFileParts(fileKey) {
+  const file = db.getFile(fileKey);
+  if (!file) return null;
+
+  const match = file.filename.match(/(.+)\.part(\d+)$/i);
+  if (match) {
+    const baseName = match[1];
+    // Retrieve all files in DB to match baseName
+    const allFiles = db.getFiles();
+    const partFiles = allFiles.filter(f => {
+      const m = f.filename.match(/(.+)\.part(\d+)$/i);
+      return m && m[1] === baseName;
+    });
+
+    if (partFiles.length > 0) {
+      partFiles.sort((a, b) => {
+        const ma = a.filename.match(/\.part(\d+)$/i);
+        const mb = b.filename.match(/\.part(\d+)$/i);
+        return parseInt(ma[1]) - parseInt(mb[1]);
+      });
+      return {
+        file,
+        parts: partFiles,
+        baseName,
+        isSplit: true
+      };
+    }
+  }
+
+  return {
+    file,
+    parts: [file],
+    baseName: file.filename,
+    isSplit: false
+  };
+}
+
+// ── Cache download de-duplication ───────────────────────────
+// A video player issues several Range requests at once. Each one used to see
+// an empty cache and start its own client.downloadMedia() into the *same*
+// path, so the writers interleaved and left a corrupt file behind. Collapse
+// concurrent work on one cache path into a single shared promise.
+const inFlightCache = new Map(); // absolute path -> Promise
+
+function dedupeCacheWork(key, fn) {
+  const existing = inFlightCache.get(key);
+  if (existing) return existing;
+  const task = (async () => fn())().finally(() => inFlightCache.delete(key));
+  inFlightCache.set(key, task);
+  return task;
+}
+
+// Download one file from Telegram into the cache, exactly once, and never
+// leave a truncated file that a later existsSync() would mistake for complete.
+async function ensureCachedOriginal(file, fileKey, baseName, reason) {
+  const ext = path.extname(baseName) || '';
+  const targetPath = path.join(cacheDir, `${fileKey}${ext}`);
+  if (fs.existsSync(targetPath)) return targetPath;
+
+  return dedupeCacheWork(targetPath, async () => {
+    if (fs.existsSync(targetPath)) return targetPath; // won by another caller
+    const partialPath = `${targetPath}.partial`;
+    console.log(`Downloading file (${reason}): ${file.filename}`);
+    await ensureConnection();
+    const messages = await client.getMessages(config.chatId, { ids: [parseInt(file.telegram_media_id)] });
+    if (!messages || messages.length === 0 || !messages[0].media) {
+      throw new Error('Pesan atau media tidak ditemukan di Telegram.');
+    }
+    try {
+      await client.downloadMedia(messages[0].media, { outputFile: partialPath, workers: 4 });
+      fs.renameSync(partialPath, targetPath);
+    } catch (err) {
+      try { if (fs.existsSync(partialPath)) fs.unlinkSync(partialPath); } catch {}
+      markRevokedIfNeeded(err, 'download');
+      throw err;
+    }
+    return targetPath;
+  });
+}
+
+async function ensureMergedCache(fileKey, parts, baseName) {
+  const ext = path.extname(baseName) || '';
+  const mergedPath = path.join(cacheDir, `${fileKey}_merged${ext}`);
+  if (fs.existsSync(mergedPath)) return mergedPath;
+
+  return dedupeCacheWork(mergedPath, async () => {
+    if (fs.existsSync(mergedPath)) return mergedPath;
+    console.log(`Merging ${parts.length} parts for split file: ${baseName}`);
+
+    // Ensure all individual parts are downloaded/cached first
+    for (const part of parts) {
+      const partExt = path.extname(part.filename) || '';
+      const partCachePath = path.join(cacheDir, `${part.file_key}${partExt}`);
+      if (!fs.existsSync(partCachePath)) {
+        await ensureCachedOriginal(part, part.file_key, part.filename, 'part');
+      }
+    }
+
+    // Append all parts sequentially.
+    // Streamed rather than readFileSync'd: a split file is by definition larger
+    // than Telegram's 2GB limit, so buffering a whole part in memory is how the
+    // server runs out of heap. Write to a .partial and rename at the end, so an
+    // interrupted merge can never leave a truncated file that looks complete.
+    const partialPath = `${mergedPath}.partial`;
+    try {
+      const writeStream = fs.createWriteStream(partialPath);
+      try {
+        for (const part of parts) {
+          const partExt = path.extname(part.filename) || '';
+          const partCachePath = path.join(cacheDir, `${part.file_key}${partExt}`);
+          // { end: false } keeps the destination open across parts; pipeline
+          // would otherwise close it after the first one.
+          await pipeline(fs.createReadStream(partCachePath), writeStream, { end: false });
+        }
+      } finally {
+        writeStream.end();
+      }
+      await new Promise((resolve, reject) => {
+        writeStream.on('finish', resolve);
+        writeStream.on('error', reject);
+      });
+      fs.renameSync(partialPath, mergedPath);
+    } catch (err) {
+      try { if (fs.existsSync(partialPath)) fs.unlinkSync(partialPath); } catch {}
+      throw err;
+    }
+    console.log(`Successfully merged parts into: ${mergedPath}`);
+    return mergedPath;
+  });
 }
 
 async function downloadTelegramThumb(message) {
@@ -336,6 +647,16 @@ function checkConfig(req, res, next) {
   if (!config.sessionString || !config.apiId || !config.apiHash || !config.chatId) {
     return res.status(400).json({ error: 'Konfigurasi Telegram belum lengkap.', configured: false });
   }
+  // Check auth-key validity before socket state. A revoked key still reports
+  // `connected: true`, which is why broken uploads used to look healthy.
+  if (telegramAuthState === 'revoked') {
+    return res.status(409).json({
+      error: SESSION_REVOKED_MESSAGE,
+      configured: true,
+      connected: !!(client && client.connected),
+      sessionRevoked: true
+    });
+  }
   if (!client || !client.connected) {
     return res.status(400).json({ error: 'Telegram Client tidak terhubung. Silakan hubungkan kembali.', configured: true, connected: false });
   }
@@ -348,10 +669,13 @@ function checkConfig(req, res, next) {
 
 // --- Health Check (for Railway) ---
 app.get('/health', (req, res) => {
+  // Always 200: this is Railway's deploy gate, and a revoked Telegram session
+  // is a user-fixable condition, not a reason to fail the whole deployment.
   res.json({
     status: 'ok',
     uptime: process.uptime(),
     telegram: client ? client.connected : false,
+    telegramAuth: telegramAuthState,
     timestamp: new Date().toISOString()
   });
 });
@@ -362,7 +686,10 @@ app.get('/api/settings', (req, res) => {
     configured: !!(config.apiId && config.apiHash && config.sessionString),
     apiId: config.apiId || '',
     chatId: config.chatId || '',
-    connected: client ? client.connected : false
+    connected: client ? client.connected : false,
+    // Surfaced so the dashboard can warn on load rather than waiting for an
+    // upload to fail.
+    sessionRevoked: telegramAuthState === 'revoked'
   });
 });
 
@@ -384,15 +711,34 @@ app.post('/api/settings', async (req, res) => {
 app.post('/api/auth/send-code', async (req, res) => {
   let { apiId, apiHash, phone } = req.body;
   if (!phone) return res.status(400).json({ error: 'Nomor Telepon diperlukan.' });
-  if (!apiId) apiId = 6;
-  if (!apiHash) apiHash = 'eb06d4abfb49dc3eeb1aeb98ae0f581e';
+
+  // Fall back to server-side env credentials, never to shared public ones.
+  // The old default (apiId 6 + the official Android hash) is flagged by
+  // Telegram's anti-abuse system and risks getting the account limited.
+  if (!apiId) apiId = process.env.API_ID || '';
+  if (!apiHash) apiHash = process.env.API_HASH || '';
+
+  if (!apiId || !apiHash) {
+    return res.status(400).json({
+      error: 'API ID dan API Hash diperlukan. Daftarkan aplikasi Anda sendiri di my.telegram.org, lalu masukkan kredensialnya.'
+    });
+  }
+
+  const parsedApiId = parseInt(apiId);
+  if (!Number.isInteger(parsedApiId) || parsedApiId <= 0) {
+    return res.status(400).json({ error: 'API ID harus berupa angka positif.' });
+  }
+  if (typeof apiHash !== 'string' || !/^[a-f0-9]{32}$/i.test(apiHash.trim())) {
+    return res.status(400).json({ error: 'API Hash tidak valid — seharusnya 32 karakter heksadesimal.' });
+  }
+  apiHash = apiHash.trim();
 
   try {
     console.log(`Initiating login for phone: ${phone}...`);
     db.logActivity('Auth', `Memulai login untuk nomor telepon ${phone}`);
 
     const tempSession = new StringSession('');
-    const tempClient = new TelegramClient(tempSession, parseInt(apiId), apiHash, {
+    const tempClient = new TelegramClient(tempSession, parsedApiId, apiHash, {
       connectionRetries: 5,
       deviceModel: 'Android',
       systemVersion: '11.0',
@@ -401,12 +747,12 @@ app.post('/api/auth/send-code', async (req, res) => {
     await tempClient.connect();
 
     const { phoneCodeHash } = await tempClient.sendCode({
-      apiId: parseInt(apiId),
+      apiId: parsedApiId,
       apiHash: apiHash
     }, phone);
 
     const authId = 'auth-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5);
-    activeAuths.set(authId, { client: tempClient, phone, apiId, apiHash, phoneCodeHash });
+    activeAuths.set(authId, { client: tempClient, phone, apiId: parsedApiId, apiHash, phoneCodeHash, createdAt: Date.now() });
 
     db.logActivity('Auth', `Kode OTP dikirim ke akun Telegram untuk nomor ${phone}`);
     res.json({ success: true, authId });
@@ -427,6 +773,17 @@ app.post('/api/auth/sign-in', async (req, res) => {
 
   try {
     console.log(`Signing in for phone: ${auth.phone} with code: ${code}...`);
+
+    // Reconnect temp client if disconnected (common on slow OTP entry)
+    if (!auth.client.connected) {
+      console.log('Auth temp client disconnected, reconnecting...');
+      await auth.client.connect();
+      if (!auth.client.connected) {
+        return res.status(400).json({ error: 'Koneksi ke Telegram terputus. Silakan kirim ulang kode OTP.' });
+      }
+      console.log('Auth temp client reconnected.');
+    }
+
     let user;
 
     try {
@@ -469,6 +826,10 @@ app.post('/api/auth/sign-in', async (req, res) => {
     }
 
     client = auth.client;
+    // Fresh login means a fresh auth key — clear any prior revocation so the
+    // API stops answering 409 and uploads are allowed again.
+    telegramAuthState = 'ok';
+    isReconnecting = false;
     startKeepAlive();
     startSessionSave();
 
@@ -509,7 +870,11 @@ app.post('/api/logout', async (req, res) => {
 
 // 4. File list
 app.get('/api/files', checkConfig, (req, res) => {
-  try { res.json(db.getFiles(req.query.search, req.query.category)); }
+  try {
+    const rawFiles = db.getFiles(req.query.search, req.query.category);
+    const grouped = groupSplitFiles(rawFiles);
+    res.json(grouped);
+  }
   catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -600,13 +965,23 @@ app.post('/api/upload', checkConfig, upload.single('file'), async (req, res) => 
 
     res.json({ success: true, fileKey });
   } catch (err) {
+    // AUTH_KEY_UNREGISTERED surfaces here, from upload.SaveFilePart, once the
+    // transfer is already under way. Report it as a distinct 409 so the client
+    // can tell "reconnect your Telegram account" apart from a real server fault.
+    const revoked = err.sessionRevoked || markRevokedIfNeeded(err, 'upload');
+    const message = revoked ? SESSION_REVOKED_MESSAGE : err.message;
+
     console.error('Upload failed:', err);
     db.logActivity('Upload', `Gagal mengunggah ${originalName}: ${err.message}`, 'error');
     if (fs.existsSync(filePath)) try { fs.unlinkSync(filePath); } catch {}
     try { if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath); if (fs.existsSync(tempDir2)) fs.rmdirSync(tempDir2); } catch {}
     const p = uploadProgress.get(uploadId);
-    if (p) { p.status = 'error'; }
-    res.status(500).json({ error: err.message });
+    if (p) { p.status = 'error'; p.error = message; if (revoked) p.sessionRevoked = true; }
+
+    if (revoked) {
+      return res.status(409).json({ error: message, sessionRevoked: true });
+    }
+    res.status(500).json({ error: message });
   }
 });
 
@@ -732,79 +1107,59 @@ app.get('/api/thumb/:fileKey', checkConfig, async (req, res) => {
 app.get('/api/preview/:fileKey', checkConfig, async (req, res) => {
   const { fileKey } = req.params;
   try {
-    const file = db.getFile(fileKey);
-    if (!file) return res.status(404).json({ error: 'File tidak ditemukan.' });
+    const resolved = await resolveFileParts(fileKey);
+    if (!resolved) return res.status(404).json({ error: 'File tidak ditemukan.' });
+
+    const { file, parts, baseName, isSplit } = resolved;
     if (!file.telegram_media_id) {
       return res.status(400).json({ error: 'Berkas lama tidak didukung pada skema login MTProto baru. Silakan unggah kembali berkas ini.' });
     }
 
-    const ext = path.extname(file.filename) || '';
-    const cachedPath = path.join(cacheDir, `${fileKey}${ext}`);
-    const compressedPath = path.join(cacheDir, `${fileKey}.webp`);
+    const ext = path.extname(baseName) || '';
+    const category = getCategory(baseName, getMimeTypeByFilename(baseName));
+
+    let targetPath;
+    if (isSplit) {
+      targetPath = await ensureMergedCache(fileKey, parts, baseName);
+    } else {
+      targetPath = await ensureCachedOriginal(file, fileKey, baseName, 'preview');
+    }
+
+    const mimeType = getMimeTypeByFilename(baseName);
 
     // For images, use compressed preview if available
-    if (file.category === 'image') {
+    if (category === 'image') {
+      const compressedPath = path.join(cacheDir, `${fileKey}.webp`);
       // Check if compressed version already exists
       if (fs.existsSync(compressedPath)) {
         res.setHeader('Content-Type', 'image/webp');
         return res.sendFile(compressedPath);
       }
 
-      // Download original from Telegram
-      if (!fs.existsSync(cachedPath)) {
-        console.log(`Downloading file for preview: ${file.filename}`);
-        db.logActivity('Download', `Mengunduh ${file.filename} untuk pratinjau`);
-        await ensureConnection();
-        const messages = await client.getMessages(config.chatId, { ids: [parseInt(file.telegram_media_id)] });
-        if (!messages || messages.length === 0 || !messages[0].media) {
-          throw new Error('Pesan atau media tidak ditemukan di Telegram.');
-        }
-        await client.downloadMedia(messages[0].media, {
-          outputFile: cachedPath,
-          workers: 4
-        });
-        console.log(`Cached original: ${file.filename}`);
-      }
-
       // Compress the image with Sharp
       try {
-        const originalBuffer = fs.readFileSync(cachedPath);
+        const originalBuffer = fs.readFileSync(targetPath);
         const compressedBuffer = await compressImage(originalBuffer, 1920, 80);
         if (compressedBuffer.length < originalBuffer.length) {
           // Compressed is smaller — save and serve compressed
           fs.writeFileSync(compressedPath, compressedBuffer);
-          console.log(`Compressed preview: ${file.filename} (${(originalBuffer.length/1024).toFixed(0)}KB → ${(compressedBuffer.length/1024).toFixed(0)}KB)`);
+          console.log(`Compressed preview: ${baseName} (${(originalBuffer.length/1024).toFixed(0)}KB → ${(compressedBuffer.length/1024).toFixed(0)}KB)`);
           res.setHeader('Content-Type', 'image/webp');
           return res.send(compressedBuffer);
         } else {
           // Compression didn't help, serve original
-          res.setHeader('Content-Type', file.mime_type || 'application/octet-stream');
-          return res.sendFile(cachedPath);
+          res.setHeader('Content-Type', mimeType);
+          return res.sendFile(targetPath);
         }
       } catch (compressErr) {
         console.log('Compression failed, serving original:', compressErr.message);
-        res.setHeader('Content-Type', file.mime_type || 'application/octet-stream');
-        return res.sendFile(cachedPath);
+        res.setHeader('Content-Type', mimeType);
+        return res.sendFile(targetPath);
       }
     }
 
-    // For non-images, serve cached original
-    if (!fs.existsSync(cachedPath)) {
-      console.log(`Downloading file for preview: ${file.filename}`);
-      await ensureConnection();
-      const messages = await client.getMessages(config.chatId, { ids: [parseInt(file.telegram_media_id)] });
-      if (!messages || messages.length === 0 || !messages[0].media) {
-        throw new Error('Pesan atau media tidak ditemukan di Telegram.');
-      }
-      await client.downloadMedia(messages[0].media, {
-        outputFile: cachedPath,
-        workers: 4
-      });
-      console.log(`Cached file: ${file.filename}`);
-    }
-
-    res.setHeader('Content-Type', file.mime_type || 'application/octet-stream');
-    res.sendFile(cachedPath);
+    res.setHeader('Content-Type', mimeType);
+    res.sendFile(targetPath);
   } catch (err) {
     console.error('Preview error:', err);
     db.logActivity('Download', `Gagal mengunduh pratinjau: ${err.message}`, 'error');
@@ -816,31 +1171,24 @@ app.get('/api/preview/:fileKey', checkConfig, async (req, res) => {
 app.get('/api/download-original/:fileKey', checkConfig, async (req, res) => {
   const { fileKey } = req.params;
   try {
-    const file = db.getFile(fileKey);
-    if (!file) return res.status(404).json({ error: 'File tidak ditemukan.' });
+    const resolved = await resolveFileParts(fileKey);
+    if (!resolved) return res.status(404).json({ error: 'File tidak ditemukan.' });
+
+    const { file, parts, baseName, isSplit } = resolved;
     if (!file.telegram_media_id) {
       return res.status(400).json({ error: 'Berkas lama tidak didukung pada skema login MTProto baru.' });
     }
 
-    const ext = path.extname(file.filename) || '';
-    const cachedPath = path.join(cacheDir, `${fileKey}${ext}`);
-
-    if (!fs.existsSync(cachedPath)) {
-      console.log(`Downloading original file: ${file.filename}`);
-      db.logActivity('Download', `Mengunduh berkas asli ${file.filename}`);
-      await ensureConnection();
-      const messages = await client.getMessages(config.chatId, { ids: [parseInt(file.telegram_media_id)] });
-      if (!messages || messages.length === 0 || !messages[0].media) {
-        throw new Error('Pesan atau media tidak ditemukan di Telegram.');
-      }
-      await client.downloadMedia(messages[0].media, {
-        outputFile: cachedPath,
-        workers: 4
-      });
+    const ext = path.extname(baseName) || '';
+    let targetPath;
+    if (isSplit) {
+      targetPath = await ensureMergedCache(fileKey, parts, baseName);
+    } else {
+      targetPath = await ensureCachedOriginal(file, fileKey, baseName, 'download-original');
     }
 
-    res.setHeader('Content-Type', file.mime_type || 'application/octet-stream');
-    res.download(cachedPath, file.filename);
+    res.setHeader('Content-Type', getMimeTypeByFilename(baseName));
+    res.download(targetPath, baseName);
   } catch (err) {
     console.error('Download original error:', err);
     if (!res.headersSent) res.status(500).json({ error: err.message });
@@ -851,30 +1199,26 @@ app.get('/api/download-original/:fileKey', checkConfig, async (req, res) => {
 app.get('/api/stream/:fileKey', checkConfig, async (req, res) => {
   const { fileKey } = req.params;
   try {
-    const file = db.getFile(fileKey);
-    if (!file) return res.status(404).json({ error: 'File tidak ditemukan.' });
+    const resolved = await resolveFileParts(fileKey);
+    if (!resolved) return res.status(404).json({ error: 'File tidak ditemukan.' });
+
+    const { file, parts, baseName, isSplit } = resolved;
     if (!file.telegram_media_id) {
       return res.status(400).json({ error: 'Berkas lama tidak didukung pada skema login MTProto baru.' });
     }
 
-    const ext = path.extname(file.filename) || '';
-    const cachedPath = path.join(cacheDir, `${fileKey}${ext}`);
-
-    if (!fs.existsSync(cachedPath)) {
-      console.log(`Downloading file for stream: ${file.filename}`);
-      await ensureConnection();
-      const messages = await client.getMessages(config.chatId, { ids: [parseInt(file.telegram_media_id)] });
-      if (!messages || messages.length === 0 || !messages[0].media) {
-        throw new Error('Pesan atau media tidak ditemukan di Telegram.');
-      }
-      await client.downloadMedia(messages[0].media, {
-        outputFile: cachedPath,
-        workers: 4
-      });
+    const ext = path.extname(baseName) || '';
+    let targetPath;
+    if (isSplit) {
+      targetPath = await ensureMergedCache(fileKey, parts, baseName);
+    } else {
+      targetPath = await ensureCachedOriginal(file, fileKey, baseName, 'stream');
     }
 
-    res.setHeader('Content-Type', file.mime_type || 'application/octet-stream');
-    res.sendFile(cachedPath);
+    // res.sendFile() honours the Range header via the `send` module, so seeking
+    // works once the file is cached (206 + Content-Range + Accept-Ranges).
+    res.setHeader('Content-Type', getMimeTypeByFilename(baseName));
+    res.sendFile(targetPath);
   } catch (err) {
     console.error('Stream error:', err);
     if (!res.headersSent) res.status(500).json({ error: err.message });
@@ -885,29 +1229,23 @@ app.get('/api/stream/:fileKey', checkConfig, async (req, res) => {
 app.get('/api/download/:fileKey', checkConfig, async (req, res) => {
   const { fileKey } = req.params;
   try {
-    const file = db.getFile(fileKey);
-    if (!file) return res.status(404).json({ error: 'File tidak ditemukan.' });
+    const resolved = await resolveFileParts(fileKey);
+    if (!resolved) return res.status(404).json({ error: 'File tidak ditemukan.' });
+
+    const { file, parts, baseName, isSplit } = resolved;
     if (!file.telegram_media_id) {
       return res.status(400).json({ error: 'Berkas lama tidak didukung pada skema login MTProto baru.' });
     }
 
-    const ext = path.extname(file.filename) || '';
-    const cachedPath = path.join(cacheDir, `${fileKey}${ext}`);
-
-    if (!fs.existsSync(cachedPath)) {
-      console.log(`Downloading file for download: ${file.filename}`);
-      await ensureConnection();
-      const messages = await client.getMessages(config.chatId, { ids: [parseInt(file.telegram_media_id)] });
-      if (!messages || messages.length === 0 || !messages[0].media) {
-        throw new Error('Pesan atau media tidak ditemukan di Telegram.');
-      }
-      await client.downloadMedia(messages[0].media, {
-        outputFile: cachedPath,
-        workers: 4
-      });
+    const ext = path.extname(baseName) || '';
+    let targetPath;
+    if (isSplit) {
+      targetPath = await ensureMergedCache(fileKey, parts, baseName);
+    } else {
+      targetPath = await ensureCachedOriginal(file, fileKey, baseName, 'download');
     }
 
-    res.download(cachedPath, file.filename);
+    res.download(targetPath, baseName);
   } catch (err) {
     console.error('Download error:', err);
     if (!res.headersSent) res.status(500).json({ error: err.message });
@@ -918,30 +1256,38 @@ app.get('/api/download/:fileKey', checkConfig, async (req, res) => {
 app.delete('/api/files/:fileKey', checkConfig, async (req, res) => {
   const { fileKey } = req.params;
   try {
-    const file = db.getFile(fileKey);
-    if (!file) return res.status(404).json({ error: 'File tidak ditemukan.' });
+    const resolved = await resolveFileParts(fileKey);
+    if (!resolved) return res.status(404).json({ error: 'File tidak ditemukan.' });
 
-    // Delete message from Telegram
-    try {
-      await ensureConnection();
-      await client.deleteMessages(config.chatId, [parseInt(file.telegram_media_id)], { revoke: true });
-      db.logActivity('Delete', `Berhasil menghapus berkas ${file.filename} dari Telegram`);
-    } catch (delErr) {
-      console.log("Failed to delete message in Telegram:", delErr.message);
+    const { file, parts, baseName, isSplit } = resolved;
+
+    // Delete all parts from Telegram and DB
+    for (const part of parts) {
+      try {
+        await ensureConnection();
+        await client.deleteMessages(config.chatId, [parseInt(part.telegram_media_id)], { revoke: true });
+      } catch (delErr) {
+        console.log(`Failed to delete part ${part.filename} in Telegram:`, delErr.message);
+      }
+      db.deleteFile(part.file_key);
+
+      // Clean cache & thumb for this part
+      const partExt = path.extname(part.filename) || '';
+      [
+        path.join(cacheDir, `${part.file_key}${partExt}`),
+        path.join(thumbDir, `${part.file_key}${partExt}`),
+        path.join(cacheDir, `${part.file_key}.webp`)
+      ].forEach(f => {
+        if (fs.existsSync(f)) try { fs.unlinkSync(f); } catch {}
+      });
     }
 
-    db.deleteFile(fileKey);
+    // Clean merged cache if exists
+    const ext = path.extname(baseName) || '';
+    const mergedPath = path.join(cacheDir, `${fileKey}_merged${ext}`);
+    if (fs.existsSync(mergedPath)) try { fs.unlinkSync(mergedPath); } catch {}
 
-    // Clean cache & thumb & compressed
-    const ext = path.extname(file.filename) || '';
-    [
-      path.join(cacheDir, `${fileKey}${ext}`),
-      path.join(thumbDir, `${fileKey}${ext}`),
-      path.join(cacheDir, `${fileKey}.webp`)  // compressed preview
-    ].forEach(f => {
-      if (fs.existsSync(f)) try { fs.unlinkSync(f); } catch {}
-    });
-
+    db.logActivity('Delete', `Berhasil menghapus berkas ${baseName} beserta seluruh pecahannya.`);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1042,45 +1388,39 @@ async function syncAllFromChannel() {
       if (messages.length === 0) break;
 
       for (const msg of messages) {
-        // Skip empty messages or non-document media
-        if (!msg.media || !msg.media.document) continue;
-
-        const doc = msg.media.document;
-        const filename = (doc.attributes || [])
-          .filter(a => a.className === 'DocumentAttributeFilename')
-          .map(a => a.fileName)[0] || `file_${msg.id}`;
-        const mimeType = doc.mimeType || 'application/octet-stream';
-        // Convert Long/BigInt values to plain Number for SQLite binding
-        const totalSize = typeof doc.size === 'object' && doc.size !== null ? Number(doc.size) : (parseInt(doc.size) || 0);
-        const fileKey = `sync_${msg.id}`;
-
-        // Check if file already exists by file_key (message ID)
-        let existing;
-        try { existing = db.getFile(fileKey); } catch { existing = null; }
-        if (existing) {
-          skipped++;
-          continue;
-        }
-
-        const category = getCategory(filename, mimeType);
-        const telegramMediaId = msg.id.toString();
-        const accessHash = doc.accessHash ? (typeof doc.accessHash === 'object' ? doc.accessHash.toString() : String(doc.accessHash)) : '0';
-        const fileReference = doc.fileReference ? (Buffer.isBuffer(doc.fileReference) ? doc.fileReference.toString('hex') : String(doc.fileReference)) : '';
-        const dcId = typeof doc.dcId === 'object' && doc.dcId !== null ? Number(doc.dcId) : (parseInt(doc.dcId) || 4);
-
-        db.saveFile(fileKey, filename, mimeType, category, totalSize, telegramMediaId, accessHash, fileReference, null, dcId);
-        added++;
-
-        // Download thumbnail in background (non-blocking)
         try {
-          const thumbBuffer = await downloadTelegramThumb(msg);
-          if (thumbBuffer) {
-            const ext = path.extname(filename) || '';
-            fs.writeFileSync(path.join(thumbDir, `${fileKey}${ext}`), thumbBuffer);
-            db.updateFileThumb(fileKey, 'local_cached');
+          // Skip empty messages or non-document media
+          if (!msg.media || !msg.media.document) continue;
+
+          const doc = msg.media.document;
+          const filename = (doc.attributes || [])
+            .filter(a => a.className === 'DocumentAttributeFilename')
+            .map(a => a.fileName)[0] || `file_${msg.id}`;
+          const mimeType = doc.mimeType || 'application/octet-stream';
+          // Convert Long/BigInt values to plain Number for SQLite binding
+          const totalSize = typeof doc.size === 'object' && doc.size !== null ? Number(doc.size) : (parseInt(doc.size) || 0);
+          const fileKey = `sync_${msg.id}`;
+
+          // Check if file already exists by file_key (message ID)
+          let existing;
+          try { existing = db.getFile(fileKey); } catch { existing = null; }
+          if (existing) {
+            skipped++;
+            continue;
           }
-        } catch (thumbErr) {
-          // Silently fail thumbnail download
+
+          const category = getCategory(filename, mimeType);
+          const telegramMediaId = msg.id.toString();
+          const accessHash = doc.accessHash ? (typeof doc.accessHash === 'object' ? doc.accessHash.toString() : String(doc.accessHash)) : '0';
+          const fileReference = doc.fileReference ? (Buffer.isBuffer(doc.fileReference) ? doc.fileReference.toString('hex') : String(doc.fileReference)) : '';
+          const dcId = typeof doc.dcId === 'object' && doc.dcId !== null ? Number(doc.dcId) : (parseInt(doc.dcId) || 4);
+
+          db.saveFile(fileKey, filename, mimeType, category, totalSize, telegramMediaId, accessHash, fileReference, null, dcId);
+          added++;
+
+
+        } catch (msgErr) {
+          console.error(`Error syncing message ID ${msg.id}:`, msgErr.message);
         }
       }
 
@@ -1146,5 +1486,61 @@ function cleanupCacheDir() {
   }
 }
 cleanupCacheDir();
+
+// ── Runtime cache eviction ──────────────────────────────────
+// Startup cleanup alone is not enough: a long-running instance streaming large
+// files will fill the Railway volume and start failing writes. Evict on a timer
+// too — oldest-accessed first, until the cache is back under its size cap.
+const CACHE_MAX_BYTES = Number(process.env.CACHE_MAX_BYTES || 2 * 1024 * 1024 * 1024); // 2 GB
+const CACHE_MAX_AGE_MS = Number(process.env.CACHE_MAX_AGE_MS || 24 * 60 * 60 * 1000);  // 24 h
+
+function pruneCacheDir() {
+  try {
+    const now = Date.now();
+    const entries = [];
+    let total = 0;
+
+    for (const name of fs.readdirSync(cacheDir)) {
+      const fp = path.join(cacheDir, name);
+      // Never touch a download or merge that is still in progress.
+      if (name.endsWith('.partial') || inFlightCache.has(fp)) continue;
+      try {
+        const stat = fs.statSync(fp);
+        if (!stat.isFile()) continue;
+        entries.push({ fp, size: stat.size, atime: stat.atimeMs });
+        total += stat.size;
+      } catch {}
+    }
+
+    let freed = 0;
+    let removed = 0;
+    const drop = ({ fp, size }) => {
+      try { fs.unlinkSync(fp); freed += size; removed++; return true; } catch { return false; }
+    };
+
+    // Age-based first, then oldest-accessed until we are under the cap.
+    const survivors = [];
+    for (const e of entries) {
+      if (now - e.atime > CACHE_MAX_AGE_MS) {
+        if (drop(e)) { total -= e.size; continue; }
+      }
+      survivors.push(e);
+    }
+
+    survivors.sort((a, b) => a.atime - b.atime); // least recently used first
+    for (const e of survivors) {
+      if (total <= CACHE_MAX_BYTES) break;
+      if (drop(e)) total -= e.size;
+    }
+
+    if (removed > 0) {
+      console.log(`Cache prune: removed ${removed} file(s), freed ${(freed / 1024 / 1024).toFixed(1)} MB`);
+    }
+  } catch (err) {
+    console.error('Cache prune error:', err.message);
+  }
+}
+
+setInterval(pruneCacheDir, 15 * 60 * 1000).unref();
 
 app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT} (Data dir: ${dataDir})`));

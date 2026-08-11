@@ -4,6 +4,9 @@ temp/
 uploads/
 cache/
 thumbs/
-metadata.db
+metadata.db*
+gramjs-localstorage.json*
 .env
 *.log
+*.bak
+src/tailwind-generated.css

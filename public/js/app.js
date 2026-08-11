@@ -21,6 +21,8 @@
  const $$ = s => document.querySelectorAll(s);
 
  const wizardEl = $('#setup-wizard');
+ const loginGateEl = $('#login-gate');
+ const loginForm = $('#login-form');
  const dashboardEl = $('#app-dashboard');
  const setupFormStep1 = $('#setup-form-step1');
  const setupFormStep2 = $('#setup-form-step2');
@@ -42,6 +44,95 @@
 
  let ctxTarget = null; // File data for context menu
  let lightboxFile = null;
+
+ /* ===================================================================
+ LOGIN GATE
+ =================================================================== */
+
+ // Wrap fetch once so any 401 from any call bounces the user back to the
+ // login screen instead of failing silently deep in the UI.
+ const rawFetch = window.fetch.bind(window);
+ window.fetch = async (...args) => {
+ const res = await rawFetch(...args);
+ const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url) || '';
+ if (res.status === 401) {
+ if (url.includes('/api/') && !url.includes('/api/auth/login')) showLoginGate();
+ }
+ // 409 means the Telegram session was revoked. Nothing the user does in the
+ // UI will work until they log in again, so raise a banner that stays put.
+ if (res.status === 409 && url.includes('/api/')) {
+ res.clone().json().then(d => {
+ if (d && d.sessionRevoked) showSessionBanner(d.error);
+ }).catch(() => {});
+ }
+ return res;
+ };
+
+ // Persistent, dismissable warning shown when Telegram has revoked our session.
+ function showSessionBanner(message) {
+ const banner = $('#session-banner');
+ if (!banner) return;
+ const msgEl = $('#session-banner-msg');
+ if (msgEl && message) msgEl.textContent = message;
+ banner.classList.remove('hidden');
+ setConnDot(false);
+ }
+
+ function hideSessionBanner() {
+ const banner = $('#session-banner');
+ if (banner) banner.classList.add('hidden');
+ setConnDot(true);
+ }
+
+ // The sidebar pill used to say "TELEGRAM OK" unconditionally — the same lie the
+ // server used to tell. Keep it honest: it follows the real session state.
+ function setConnDot(ok) {
+ const box = $('#conn-dot');
+ if (!box) return;
+ const dot = box.querySelector('.dot');
+ const label = box.querySelector('span:last-child');
+ if (dot) dot.style.backgroundColor = ok ? '#10b981' : '#d93025';
+ if (label) label.textContent = ok ? 'TELEGRAM OK' : 'SESI BERAKHIR';
+ }
+
+ function showLoginGate() {
+ loginGateEl.classList.remove('hidden');
+ wizardEl.classList.add('hidden');
+ dashboardEl.classList.add('hidden');
+ }
+
+ loginForm.addEventListener('submit', async e => {
+ e.preventDefault();
+ const errEl = $('#login-error');
+ const spinEl = loginForm.querySelector('.spin');
+ const input = $('#login-password');
+
+ errEl.classList.add('hidden');
+ spinEl.classList.remove('hidden');
+
+ try {
+ const res = await rawFetch('/api/auth/login', {
+ method: 'POST',
+ headers: { 'Content-Type': 'application/json' },
+ body: JSON.stringify({ password: input.value })
+ });
+ const data = await res.json();
+
+ if (data.success) {
+ input.value = '';
+ loginGateEl.classList.add('hidden');
+ init();
+ } else {
+ errEl.textContent = data.error || 'Password salah.';
+ errEl.classList.remove('hidden');
+ }
+ } catch (err) {
+ errEl.textContent = 'Kesalahan jaringan: ' + err.message;
+ errEl.classList.remove('hidden');
+ } finally {
+ spinEl.classList.add('hidden');
+ }
+ });
 
  /* ===================================================================
  HELPERS
@@ -153,6 +244,10 @@
  try {
  const res = await fetch('/api/settings');
  const data = await res.json();
+ // Surface a revoked session immediately on load, rather than waiting for the
+ // user to attempt an upload and watch it fail.
+ if (data.sessionRevoked) showSessionBanner();
+ else hideSessionBanner();
  if (data.configured && data.connected) {
  if (data.chatId) {
  isConfigured = true;
@@ -410,6 +505,14 @@
  errEl.textContent = err.message;
  errEl.classList.remove('hidden');
  }
+ });
+
+ // Lock drive — ends the drive session but keeps the Telegram login intact
+ $('#btn-lock').addEventListener('click', async () => {
+ try { await fetch('/api/auth/logout', { method: 'POST' }); } catch {}
+ settingsModal.classList.add('hidden');
+ allFiles = [];
+ showLoginGate();
  });
 
  // Logout / Keluar
@@ -1354,6 +1457,7 @@
  loadStats();
  cleanupAndComplete('done');
  } else if (data.status === 'error') {
+ if (data.sessionRevoked) showSessionBanner(data.error);
  cleanupAndComplete('error');
  }
  } catch (err) {
@@ -1364,6 +1468,16 @@
  cleanupAndComplete('error');
  };
  } else {
+ // XHR bypasses the fetch interceptor, so the revoked-session case has to
+ // be recognised here too — this is the path a failing upload actually takes.
+ if (xhr.status === 401) {
+ showLoginGate();
+ } else if (xhr.status === 409) {
+ try {
+ const d = JSON.parse(xhr.responseText);
+ if (d && d.sessionRevoked) showSessionBanner(d.error);
+ } catch {}
+ }
  cleanupAndComplete('error');
  }
  });
@@ -1840,5 +1954,15 @@
  /* ===================================================================
  BOOT
  =================================================================== */
- init();
+ // Check the drive password before touching any other API.
+ (async () => {
+ try {
+ const res = await rawFetch('/api/auth/status');
+ const data = await res.json();
+ if (data.authenticated) init();
+ else showLoginGate();
+ } catch {
+ showLoginGate();
+ }
+ })();
 })();

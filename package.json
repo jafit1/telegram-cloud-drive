@@ -5,7 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node --localstorage-file=gramjs-localstorage.json server.js",
-    "build": "echo 'Sharp native module will be installed by Nixpacks automatically'"
+    "build": "echo 'Sharp native module will be installed by Nixpacks automatically'",
+    "build:css": "npx --yes tailwindcss@3 -i ./src/input.css -o ./src/tailwind-generated.css --minify"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
