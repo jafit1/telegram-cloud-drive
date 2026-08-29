@@ -3,11 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <meta name="theme-color" content="#1a73e8">
-  <title>Drive — Telegram Cloud Storage</title>
+  <meta name="theme-color" content="#171717">
+  <title>Nexus Drive — Telegram Cloud Storage</title>
   <meta name="description" content="Unlimited cloud drive powered by Telegram. Fast, secure, free.">
 
-  <!-- Apply saved theme before first paint (avoids light→dark flash) -->
+  <!-- Apply saved theme before first paint -->
   <script>
     (function () {
       try {
@@ -18,14 +18,11 @@
     })();
   </script>
 
-  <!-- Static stylesheet — replaces the Tailwind Play CDN, which is not for production -->
   <link rel="stylesheet" href="/css/app.css">
-
-  <!-- Fonts load async; the stack falls back to system sans so text never blocks paint -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&display=swap" media="print" onload="this.media='all'">
-  <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&display=swap"></noscript>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" media="print" onload="this.media='all'">
+  <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"></noscript>
 </head>
 <body class="antialiased">
 
@@ -33,25 +30,24 @@
        LOGIN GATE
        ══════════════════════════════════════════════════════════ -->
   <div id="login-gate" class="fixed inset-0 bg-obsidian/50 backdrop-blur-md z-[60] flex items-center justify-center p-4 hidden">
-    <div class="bg-surface border border-cloud rounded-card w-full max-w-sm p-8 text-textDark shadow-md relative">
+    <div class="card w-full max-w-sm p-8">
       <div class="flex flex-col items-center mb-8">
-        <div class="w-16 h-16 bg-paper rounded-full flex items-center justify-center mb-4 border border-cloud">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="w-8 h-8 text-primary">
-            <rect x="3" y="11" width="18" height="11" rx="2"/>
-            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+        <div class="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center mb-4 border border-primary/15">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="w-7 h-7 text-primary">
+            <path d="M18 10l-6-6-6 6"/><path d="M12 4v16"/>
           </svg>
         </div>
-        <h1 class="text-2xl font-semibold tracking-tight">Drive Terkunci</h1>
-        <p class="text-center text-sm text-textGray mt-3">Masukkan password untuk membuka drive Anda.</p>
+        <h1 class="text-2xl font-semibold tracking-tight">Nexus Drive</h1>
+        <p class="text-center text-sm text-textGray mt-2">Masukkan password untuk mengakses drive Anda.</p>
       </div>
 
       <form id="login-form" class="flex flex-col gap-5">
         <div class="flex flex-col gap-2">
           <label for="login-password" class="text-[11px] font-semibold text-textGray uppercase tracking-wider">Password</label>
-          <input type="password" id="login-password" placeholder="Password drive" class="w-full bg-paper border border-cloud rounded-control focus:border-primary text-textDark text-sm outline-none px-4 py-2.5 transition" required autocomplete="current-password">
+          <input type="password" id="login-password" placeholder="Password drive" class="input" required autocomplete="current-password">
         </div>
-        <div id="login-error" class="hidden text-xs bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-control"></div>
-        <button type="submit" class="w-full bg-primary hover:bg-accent text-white font-semibold text-sm rounded-control transition-all duration-300 py-3 flex items-center justify-center gap-2">
+        <div id="login-error" class="hidden text-xs bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-control"></div>
+        <button type="submit" class="btn-primary w-full py-3">
           <span>Masuk</span>
           <div class="spin hidden w-4 h-4 border-2 border-white rounded-full animate-spin" style="border-top-color:transparent"></div>
         </button>
@@ -63,47 +59,45 @@
        SETUP WIZARD
        ══════════════════════════════════════════════════════════ -->
   <div id="setup-wizard" class="fixed inset-0 bg-obsidian/50 backdrop-blur-md z-50 flex items-center justify-center p-4 hidden">
-    <div class="bg-surface border border-cloud rounded-card w-full max-w-md p-6 sm:p-8 text-textDark shadow-md relative max-h-[92vh] overflow-y-auto custom-scrollbar">
+    <div class="card w-full max-w-md p-6 sm:p-8 max-h-[92vh] overflow-y-auto custom-scrollbar">
       <div class="flex flex-col items-center mb-8">
-        <div class="w-16 h-16 bg-paper rounded-full flex items-center justify-center mb-4 border border-cloud">
-          <svg viewBox="0 0 100 100" class="w-10 h-10">
-            <polygon points="30,85 70,85 90,52 50,52" fill="#1a73e8"/>
-            <polygon points="50,15 90,52 50,52 30,17" fill="#1e8e3e"/>
-            <polygon points="50,15 30,17 30,85 50,52" fill="#fbbc04"/>
+        <div class="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center mb-4 border border-primary/15">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="w-7 h-7 text-primary">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
           </svg>
         </div>
-        <h1 class="text-2xl font-semibold tracking-tight">Cloud Drive Setup</h1>
-        <p class="text-center text-sm text-textGray mt-3">Hubungkan akun Telegram Anda untuk penyimpanan langsung 2GB tanpa pemotongan.</p>
+        <h1 class="text-2xl font-semibold tracking-tight">Hubungkan Telegram</h1>
+        <p class="text-center text-sm text-textGray mt-2">Login dengan akun Telegram Anda untuk penyimpanan langsung tanpa batas.</p>
       </div>
 
       <!-- Step 1: Request OTP -->
       <form id="setup-form-step1" class="flex flex-col gap-5">
         <div class="flex flex-col gap-2">
-          <label for="phone-number" class="text-[11px] font-semibold text-textGray uppercase tracking-wider">Nomor Telepon Telegram</label>
-          <input type="tel" id="phone-number" value="+62" placeholder="Contoh: +628123456789" class="w-full bg-paper border border-cloud rounded-control focus:border-primary text-textDark text-sm outline-none px-4 py-2.5 transition" required autocomplete="tel">
-          <span class="text-xs text-fog">Gunakan kode negara (misal +62 untuk Indonesia).</span>
+          <label for="phone-number" class="text-[11px] font-semibold text-textGray uppercase tracking-wider">Nomor Telepon</label>
+          <input type="tel" id="phone-number" value="+62" placeholder="+628123456789" class="input" required autocomplete="tel">
+          <span class="text-xs text-textGray/60">Gunakan format internasional, contoh: +62812...</span>
         </div>
 
-        <details class="adv-details group border-t border-cloud pt-4" open>
+        <details class="border-t border-cloud pt-4" open>
           <summary class="list-none flex items-center justify-between text-xs font-semibold text-textDark cursor-pointer outline-none select-none">
-            <span>Kredensial API Telegram (Wajib)</span>
-            <svg class="w-4 h-4 group-open:rotate-180 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+            <span>Kredensial API Telegram</span>
+            <svg class="w-4 h-4 transition-transform group-open:rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
           </summary>
           <div class="flex flex-col gap-4 mt-4">
             <div class="flex flex-col gap-2">
-              <label for="api-id" class="text-xs text-textGray">API ID</label>
-              <input type="text" id="api-id" placeholder="Contoh: 1234567" class="w-full bg-paper border border-cloud rounded-control focus:border-primary text-textDark text-sm outline-none px-4 py-2 transition" required autocomplete="off" inputmode="numeric">
-              <span class="text-xs text-ash">Daftarkan aplikasi Anda sendiri di <a href="https://my.telegram.org" target="_blank" rel="noopener" class="text-primary">my.telegram.org</a> — gratis dan hanya perlu sekali.</span>
+              <label for="api-id" class="text-[11px] font-semibold text-textGray uppercase tracking-wider">API ID</label>
+              <input type="text" id="api-id" placeholder="1234567" class="input" required autocomplete="off" inputmode="numeric">
             </div>
             <div class="flex flex-col gap-2">
-              <label for="api-hash" class="text-xs text-textGray">API Hash</label>
-              <input type="text" id="api-hash" placeholder="32 karakter heksadesimal" class="w-full bg-paper border border-cloud rounded-control focus:border-primary text-textDark text-sm outline-none px-4 py-2 transition" required autocomplete="off">
+              <label for="api-hash" class="text-[11px] font-semibold text-textGray uppercase tracking-wider">API Hash</label>
+              <input type="text" id="api-hash" placeholder="32 karakter heksadesimal" class="input" required autocomplete="off">
             </div>
+            <span class="text-xs text-textGray/60">Daftarkan aplikasi Anda di <a href="https://my.telegram.org" target="_blank" rel="noopener" class="text-primary">my.telegram.org</a> — gratis.</span>
           </div>
         </details>
 
-        <div id="step1-error" class="hidden text-xs bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-control"></div>
-        <button type="submit" id="btn-send-otp" class="w-full bg-primary hover:bg-accent text-white font-semibold text-sm rounded-control transition-all duration-300 py-3 flex items-center justify-center gap-2">
+        <div id="step1-error" class="hidden text-xs bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-control"></div>
+        <button type="submit" id="btn-send-otp" class="btn-primary w-full py-3">
           <span>Kirim Kode OTP</span>
           <div class="spin hidden w-4 h-4 border-2 border-white rounded-full animate-spin" style="border-top-color:transparent"></div>
         </button>
@@ -112,39 +106,27 @@
       <!-- Step 2: Verify OTP + Sign In -->
       <form id="setup-form-step2" class="hidden flex flex-col gap-5">
         <div class="flex flex-col gap-2">
-          <label for="otp-code" class="text-[11px] font-semibold text-textGray uppercase tracking-wider">Kode OTP Telegram</label>
-          <input type="text" id="otp-code" placeholder="Masukkan 5 digit kode" class="w-full bg-paper border border-cloud rounded-control focus:border-primary text-textDark text-sm outline-none px-4 py-2.5 transition" required autocomplete="one-time-code" inputmode="numeric">
-          <span class="text-xs text-fog">Kode dikirim ke aplikasi Telegram Anda.</span>
+          <label for="otp-code" class="text-[11px] font-semibold text-textGray uppercase tracking-wider">Kode OTP</label>
+          <input type="text" id="otp-code" placeholder="Masukkan kode dari Telegram" class="input" required autocomplete="one-time-code" inputmode="numeric">
         </div>
         <div class="field hidden flex flex-col gap-2" id="field-2fa">
-          <label for="password-2fa" class="text-[11px] font-semibold text-textGray uppercase tracking-wider">Password 2FA (Diperlukan)</label>
-          <input type="password" id="password-2fa" placeholder="Masukkan password Verifikasi 2 Langkah" class="w-full bg-paper border border-cloud rounded-control focus:border-primary text-textDark text-sm outline-none px-4 py-2.5 transition" autocomplete="off">
-          <span class="text-xs text-fog">Akun Anda dilindungi Verifikasi 2 Langkah. Silakan masukkan password Anda.</span>
+          <label for="password-2fa" class="text-[11px] font-semibold text-textGray uppercase tracking-wider">Password 2FA</label>
+          <input type="password" id="password-2fa" placeholder="Password Verifikasi 2 Langkah" class="input" autocomplete="off">
         </div>
-        <div id="step2-error" class="hidden text-xs bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-control"></div>
-        <div id="step2-success" class="hidden text-xs bg-emerald-50 border border-emerald-200 text-emerald-700 px-4 py-3 rounded-control"></div>
+        <div class="flex flex-col gap-2">
+          <label for="storage-chat-id" class="text-[11px] font-semibold text-textGray uppercase tracking-wider">Storage Chat ID (Opsional)</label>
+          <input type="text" id="storage-chat-id" placeholder="-1001234567890" class="input" autocomplete="off">
+          <span class="text-xs text-textGray/60">ID grup/channel tujuan penyimpanan. Bisa diatur nanti di Pengaturan.</span>
+        </div>
+        <div id="step2-error" class="hidden text-xs bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-control"></div>
+        <div id="step2-success" class="hidden text-xs bg-emerald-50 border border-emerald-200 text-emerald-600 px-4 py-3 rounded-control"></div>
         <div class="flex gap-3">
-          <button type="button" id="btn-back-step1" class="w-1/3 border border-cloud hover:border-iron text-textDark font-medium text-sm rounded-control transition py-2.5">Kembali</button>
-          <button type="submit" id="btn-verify-otp" class="w-2/3 bg-primary hover:bg-accent text-white font-semibold text-sm rounded-control transition py-2.5 flex items-center justify-center gap-2">
+          <button type="button" id="btn-back-step1" class="btn-ghost flex-1 py-2.5">Kembali</button>
+          <button type="submit" id="btn-verify-otp" class="btn-primary flex-1 py-2.5">
             <span>Masuk</span>
             <div class="spin hidden w-4 h-4 border-2 border-white rounded-full animate-spin" style="border-top-color:transparent"></div>
           </button>
         </div>
-      </form>
-
-      <!-- Step 3: Storage Config -->
-      <form id="setup-form-step3" class="hidden flex flex-col gap-5">
-        <div class="flex flex-col gap-2">
-          <label for="storage-chat-id" class="text-[11px] font-semibold text-textGray uppercase tracking-wider">Storage Chat ID (Group/Channel)</label>
-          <input type="text" id="storage-chat-id" placeholder="Contoh: -1001234567890" class="w-full bg-paper border border-cloud rounded-control focus:border-primary text-textDark text-sm outline-none px-4 py-2.5 transition" required autocomplete="off">
-          <span class="text-xs text-fog">ID group atau channel tujuan penyimpanan. Akun Anda harus bergabung ke dalamnya.</span>
-        </div>
-        <div id="step3-error" class="hidden text-xs bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-control"></div>
-        <div id="step3-success" class="hidden text-xs bg-emerald-50 border border-emerald-200 text-emerald-700 px-4 py-3 rounded-control"></div>
-        <button type="submit" id="btn-save-storage" class="w-full bg-primary hover:bg-accent text-white font-semibold text-sm rounded-control transition-all duration-300 py-3 flex items-center justify-center gap-2">
-          <span>Simpan &amp; Masuk ke Drive</span>
-          <div class="spin hidden w-4 h-4 border-2 border-white rounded-full animate-spin" style="border-top-color:transparent"></div>
-        </button>
       </form>
     </div>
   </div>
@@ -154,105 +136,84 @@
        ══════════════════════════════════════════════════════════ -->
   <div id="app-dashboard" class="hidden">
 
-    <!-- Backdrop for the mobile sidebar drawer -->
+    <!-- Mobile sidebar backdrop -->
     <div id="sidebar-backdrop"></div>
 
-    <div id="app-shell" class="flex flex-col md:flex-row gap-0 md:gap-6 md:p-6 md:h-[calc(100vh-3rem)] md:overflow-hidden">
+    <div id="app-shell" class="flex flex-col md:flex-row md:gap-4 md:p-4 md:h-[calc(100vh-3rem)] md:overflow-hidden">
 
-      <!-- ─── MOBILE TOP BAR (hidden ≥md) ─── -->
+      <!-- ─── MOBILE TOP BAR ─── -->
       <header id="topbar" class="md:hidden flex items-center justify-between gap-3 px-4 py-3 bg-surface border-b border-cloud">
         <div class="flex items-center gap-2.5 min-w-0">
           <button id="btn-menu" class="btn-icon" aria-label="Buka menu" aria-expanded="false" aria-controls="sidebar">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
           </button>
           <div class="flex items-center gap-2 min-w-0">
-            <svg viewBox="0 0 100 100" class="w-6 h-6 shrink-0">
-              <polygon points="30,85 70,85 90,52 50,52" fill="#1a73e8"/>
-              <polygon points="50,15 90,52 50,52 30,17" fill="#1e8e3e"/>
-              <polygon points="50,15 30,17 30,85 50,52" fill="#fbbc04"/>
-            </svg>
+            <div class="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center shrink-0 border border-primary/15">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4 text-primary"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            </div>
             <span class="text-sm font-semibold tracking-tight truncate">Nexus Drive</span>
           </div>
         </div>
         <div id="topbar-actions" class="flex items-center gap-2 shrink-0"></div>
       </header>
 
-      <!-- ─── SIDEBAR / DRAWER ─── -->
-      <aside id="sidebar" class="w-72 md:w-64 lg:w-72 shrink-0 flex flex-col gap-4 p-5 md:h-full md:overflow-y-auto custom-scrollbar shadow-sm">
+      <!-- ─── SIDEBAR ─── -->
+      <aside id="sidebar" class="w-72 md:w-64 lg:w-72 shrink-0 flex flex-col gap-4 p-5 md:h-full md:overflow-y-auto custom-scrollbar relative">
 
         <!-- Brand (desktop) -->
         <div class="hidden md:flex items-center gap-3 mb-2">
-          <div class="w-9 h-9 bg-paper rounded-full flex items-center justify-center border border-cloud shrink-0">
-            <svg viewBox="0 0 100 100" class="w-5 h-5">
-              <polygon points="30,85 70,85 90,52 50,52" fill="#1a73e8"/>
-              <polygon points="50,15 90,52 50,52 30,17" fill="#1e8e3e"/>
-              <polygon points="50,15 30,17 30,85 50,52" fill="#fbbc04"/>
-            </svg>
+          <div class="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center border border-primary/15 shrink-0">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-5 h-5 text-primary"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           </div>
           <div class="overflow-hidden">
             <h1 class="text-base font-semibold tracking-tight truncate">Nexus Drive</h1>
-            <p class="text-[9px] text-textGray font-medium uppercase tracking-wider truncate">Cloud Platform</p>
+            <p class="text-[10px] text-textGray font-medium uppercase tracking-wider truncate">Cloud Platform</p>
           </div>
         </div>
 
         <!-- Close button (drawer only) -->
-        <button id="btn-close-drawer" class="md:hidden self-center ml-auto btn-icon" aria-label="Tutup menu" style="position:absolute;top:0.75rem;right:0.75rem">
+        <button id="btn-close-drawer" class="md:hidden absolute top-3 right-3 btn-icon" aria-label="Tutup menu">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
 
         <!-- Connection Status -->
         <div class="flex items-center gap-2 bg-paper border border-cloud px-3 py-1.5 rounded-control w-max" id="conn-dot">
-          <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse dot" style="background-color:#10b981"></span>
-          <span class="text-[10px] font-mono font-semibold tracking-wider text-textGray">TELEGRAM OK</span>
+          <span class="w-2 h-2 rounded-full animate-pulse dot" style="background-color:rgb(var(--c-success))"></span>
+          <span class="text-[10px] font-mono font-semibold tracking-wider text-textGray">TERHUBUNG</span>
         </div>
 
-        <hr class="border-borderDark/20 my-1" style="border-style:solid;border-width:0;border-top-width:1px">
+        <div class="border-t border-cloud"></div>
 
-        <!-- Navigation / Categories -->
+        <!-- Navigation -->
         <nav class="flex flex-col gap-1">
           <span class="text-[10px] font-mono font-semibold text-textGray uppercase tracking-wider mb-1 px-2">Kategori</span>
-
-          <button class="nav-btn flex items-center justify-between px-3 py-2 rounded-control text-sm font-medium transition-colors bg-primary/10 text-primary border border-primary/20" data-category="all">
-            <span class="flex items-center gap-2.5">
-              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
-              Semua Berkas
-            </span>
+          <button class="nav-btn active" data-category="all">
+            <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+            <span>Semua Berkas</span>
           </button>
-          <button class="nav-btn flex items-center justify-between px-3 py-2 rounded-control text-sm font-medium transition-colors text-textGray hover:bg-paper hover:text-textDark border border-transparent" data-category="image">
-            <span class="flex items-center gap-2.5">
-              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-              Gambar
-            </span>
+          <button class="nav-btn" data-category="image">
+            <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+            <span>Gambar</span>
           </button>
-          <button class="nav-btn flex items-center justify-between px-3 py-2 rounded-control text-sm font-medium transition-colors text-textGray hover:bg-paper hover:text-textDark border border-transparent" data-category="video">
-            <span class="flex items-center gap-2.5">
-              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
-              Video
-            </span>
+          <button class="nav-btn" data-category="video">
+            <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+            <span>Video</span>
           </button>
-          <button class="nav-btn flex items-center justify-between px-3 py-2 rounded-control text-sm font-medium transition-colors text-textGray hover:bg-paper hover:text-textDark border border-transparent" data-category="audio">
-            <span class="flex items-center gap-2.5">
-              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
-              Audio
-            </span>
+          <button class="nav-btn" data-category="audio">
+            <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+            <span>Audio</span>
           </button>
-          <button class="nav-btn flex items-center justify-between px-3 py-2 rounded-control text-sm font-medium transition-colors text-textGray hover:bg-paper hover:text-textDark border border-transparent" data-category="document">
-            <span class="flex items-center gap-2.5">
-              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-              Dokumen
-            </span>
+          <button class="nav-btn" data-category="document">
+            <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+            <span>Dokumen</span>
           </button>
-          <button class="nav-btn flex items-center justify-between px-3 py-2 rounded-control text-sm font-medium transition-colors text-textGray hover:bg-paper hover:text-textDark border border-transparent" data-category="folder">
-            <span class="flex items-center gap-2.5">
-              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-              Folder
-            </span>
+          <button class="nav-btn" data-category="folder">
+            <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+            <span>Folder</span>
           </button>
-          <button class="nav-btn flex items-center justify-between px-3 py-2 rounded-control text-sm font-medium transition-colors text-textGray hover:bg-paper hover:text-textDark border border-transparent" data-category="logs">
-            <span class="flex items-center gap-2.5">
-              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-              Log Sistem
-            </span>
+          <button class="nav-btn" data-category="logs">
+            <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+            <span>Log Sistem</span>
           </button>
         </nav>
 
@@ -266,11 +227,11 @@
           </div>
           <div class="flex justify-between items-center text-[10px] font-mono text-textGray">
             <span id="storage-used" class="font-semibold text-textDark">0 B</span>
-            <span>2.00 GB</span>
+            <span>15 GB</span>
           </div>
         </div>
 
-        <!-- Dropzone / Intake -->
+        <!-- Upload Zone -->
         <div id="dropzone" class="bg-paper p-4 rounded-control border border-dashed border-cloud hover:border-primary transition-colors group relative">
           <div class="flex flex-col items-center justify-center text-center gap-2">
             <div class="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary group-hover:scale-110 transition-transform">
@@ -282,8 +243,8 @@
             </div>
           </div>
           <div class="flex gap-2 mt-3 relative z-10">
-            <button id="btn-upload-file" class="flex-1 bg-primary hover:bg-accent text-white text-[10px] font-bold uppercase tracking-wider py-2 rounded-control transition">File</button>
-            <button id="btn-upload-folder" class="flex-1 bg-surface hover:bg-cloud text-textDark border border-cloud text-[10px] font-bold uppercase tracking-wider py-2 rounded-control transition">Folder</button>
+            <button id="btn-upload-file" class="btn-primary flex-1 text-[10px] font-bold uppercase tracking-wider py-2">File</button>
+            <button id="btn-upload-folder" class="btn-ghost flex-1 text-[10px] font-bold uppercase tracking-wider py-2">Folder</button>
           </div>
           <input type="file" id="file-input" multiple class="hidden">
           <input type="file" id="folder-input" webkitdirectory directory multiple class="hidden">
@@ -303,31 +264,26 @@
         </div>
 
         <!-- Top Action Bar -->
-        <header class="bg-surface border-b md:border border-cloud md:rounded-card p-3 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-sm shrink-0">
-          <!-- Search -->
+        <header class="card p-3 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
           <div class="relative w-full sm:w-80">
-            <input type="search" id="search-input" placeholder="Telusuri berkas..." class="w-full bg-paper border border-cloud rounded-control text-sm outline-none pl-9 pr-8 py-2 text-textDark placeholder-textGray/50 focus:border-primary transition">
+            <input type="search" id="search-input" placeholder="Telusuri berkas..." class="input pl-9 pr-8 py-2">
             <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-textGray/60 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
             <button class="absolute right-3 top-1/2 -translate-y-1/2 text-textGray font-semibold hidden hover:text-primary text-sm leading-none" id="search-clear" aria-label="Bersihkan pencarian">&times;</button>
           </div>
 
-          <!-- Toolbar -->
           <div class="flex items-center gap-2 w-full sm:w-auto overflow-x-auto custom-scrollbar pb-1 sm:mb-0">
-            <button id="btn-sync" class="flex items-center gap-1.5 px-3 py-2 rounded-control text-[11px] font-bold uppercase tracking-wider bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/20 transition whitespace-nowrap" title="Sync dari Channel Telegram">
+            <button id="btn-sync" class="btn-ghost text-[11px] font-bold uppercase tracking-wider whitespace-nowrap" title="Sync dari Channel Telegram" style="background:rgb(var(--c-success) / 0.08);border-color:rgb(var(--c-success) / 0.2);color:rgb(var(--c-success))">
               <svg class="w-4 h-4 sync-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
               <span class="sync-text">Sync</span>
             </button>
-
             <button id="btn-layout" class="btn-icon shrink-0" title="Ubah Tampilan" aria-label="Ubah Tampilan">
               <svg id="ic-list" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
               <svg id="ic-grid" class="w-4 h-4 hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
             </button>
-
             <button id="btn-theme" class="btn-icon shrink-0" title="Ubah Tema" aria-label="Ubah Tema">
               <svg id="ic-sun" class="w-4 h-4 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
               <svg id="ic-moon" class="w-4 h-4 text-textGray hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
             </button>
-
             <button id="btn-settings" class="btn-icon shrink-0" title="Pengaturan" aria-label="Pengaturan">
               <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
             </button>
@@ -335,29 +291,39 @@
         </header>
 
         <!-- Sub Toolbar (Filters) -->
-        <div class="bg-surface border-b md:border border-cloud md:rounded-card px-4 py-2 flex flex-wrap items-center gap-3 shadow-sm shrink-0">
+        <div class="card px-4 py-2.5 flex flex-wrap items-center gap-3 shrink-0">
           <div class="flex items-center gap-2">
-            <label for="filter-sort" class="text-[10px] font-mono text-textGray uppercase">Urutkan:</label>
-            <select id="filter-sort" class="bg-transparent border border-cloud rounded-control text-textDark text-xs outline-none px-2 py-1 transition focus:border-primary">
-              <option value="newest">Terbaru</option>
-              <option value="oldest">Terlama</option>
-              <option value="largest">Terbesar</option>
-              <option value="smallest">Terkecil</option>
-              <option value="name-asc">Nama A-Z</option>
-              <option value="name-desc">Nama Z-A</option>
-            </select>
+            <span class="text-[10px] font-mono text-textGray uppercase">Urutkan:</span>
+            <div class="custom-dropdown" id="dd-sort" data-value="newest">
+              <button class="custom-dropdown-trigger" type="button" aria-haspopup="listbox" aria-expanded="false">
+                <span class="custom-dropdown-label">Terbaru</span>
+                <svg class="custom-dropdown-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
+              </button>
+              <div class="custom-dropdown-menu" role="listbox">
+                <div class="custom-dropdown-item" role="option" data-value="newest">Terbaru</div>
+                <div class="custom-dropdown-item" role="option" data-value="oldest">Terlama</div>
+                <div class="custom-dropdown-item" role="option" data-value="largest">Terbesar</div>
+                <div class="custom-dropdown-item" role="option" data-value="smallest">Terkecil</div>
+                <div class="custom-dropdown-item" role="option" data-value="name-asc">Nama A-Z</div>
+                <div class="custom-dropdown-item" role="option" data-value="name-desc">Nama Z-A</div>
+              </div>
+            </div>
           </div>
-
           <div class="flex items-center gap-2">
-            <label for="filter-size" class="text-[10px] font-mono text-textGray uppercase">Ukuran:</label>
-            <select id="filter-size" class="bg-transparent border border-cloud rounded-control text-textDark text-xs outline-none px-2 py-1 transition focus:border-primary">
-              <option value="all">Semua</option>
-              <option value="small">&lt; 10 MB</option>
-              <option value="medium">10-100 MB</option>
-              <option value="large">&gt; 100 MB</option>
-            </select>
+            <span class="text-[10px] font-mono text-textGray uppercase">Ukuran:</span>
+            <div class="custom-dropdown" id="dd-size" data-value="all">
+              <button class="custom-dropdown-trigger" type="button" aria-haspopup="listbox" aria-expanded="false">
+                <span class="custom-dropdown-label">Semua</span>
+                <svg class="custom-dropdown-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
+              </button>
+              <div class="custom-dropdown-menu" role="listbox">
+                <div class="custom-dropdown-item" role="option" data-value="all">Semua</div>
+                <div class="custom-dropdown-item" role="option" data-value="small">&lt; 10 MB</div>
+                <div class="custom-dropdown-item" role="option" data-value="medium">10-100 MB</div>
+                <div class="custom-dropdown-item" role="option" data-value="large">&gt; 100 MB</div>
+              </div>
+            </div>
           </div>
-
           <div class="flex items-center gap-2 flex-1 min-w-[120px]">
             <span class="text-[10px] font-mono text-textGray uppercase shrink-0">Ext:</span>
             <input type="text" id="filter-extension" placeholder="pdf, zip" class="w-full bg-transparent border border-cloud rounded-control text-textDark text-xs outline-none px-2 py-1 font-mono placeholder-textGray/40 transition focus:border-primary">
@@ -365,30 +331,25 @@
         </div>
 
         <!-- File List Area -->
-        <div class="bg-surface border-t md:border border-cloud md:rounded-card shadow-sm flex-1 relative overflow-hidden flex flex-col">
-
+        <div class="card flex-1 relative overflow-hidden flex flex-col">
           <div id="folder-breadcrumb" class="hidden shrink-0 flex items-center gap-1.5 text-xs text-textGray font-mono m-4 mb-0 bg-paper border border-cloud px-3 py-2 rounded-control"></div>
-
-          <h2 id="ws-title" class="text-sm font-bold tracking-tight border-l-2 border-primary pl-2 mx-4 mt-4 mb-2">Drive Saya</h2>
+          <h2 id="ws-title" class="text-sm font-semibold tracking-tight border-l-2 border-primary pl-2 mx-4 mt-4 mb-2">Drive Saya</h2>
 
           <div class="relative flex-1 overflow-y-auto custom-scrollbar p-3 sm:p-4">
-
             <!-- Loading overlay -->
             <div id="files-loading" class="absolute inset-0 bg-surface/80 flex flex-col items-center justify-center gap-3 hidden z-10">
-              <div class="w-8 h-8 border-4 border-primary rounded-full animate-spin" style="border-top-color:transparent"></div>
+              <div class="w-7 h-7 border-2 border-primary rounded-full animate-spin" style="border-top-color:transparent"></div>
               <p class="text-xs font-mono text-textGray">[ MEMUAT ]</p>
             </div>
 
             <!-- Empty State -->
             <div id="empty-state" class="flex flex-col items-center justify-center py-20 text-center text-textGray h-full">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" class="w-16 h-16 text-textGray/40 mb-3"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-              <h3 class="text-base font-bold text-textDark">Penyimpanan Kosong</h3>
-              <p class="text-xs text-textGray/70 mt-1">Seret file ke area Intake di sidebar.</p>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" class="w-16 h-16 text-textGray/30 mb-3"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+              <h3 class="text-base font-semibold text-textDark">Penyimpanan Kosong</h3>
+              <p class="text-xs text-textGray/70 mt-1">Seret file ke area unggah di sidebar.</p>
             </div>
 
-            <!-- Files Grid / List Container.
-                 app.js overwrites this className on every render; the value here
-                 matches its grid-mode string so the first paint doesn't shift. -->
+            <!-- Files Grid / List Container -->
             <div id="files-container" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3"></div>
 
             <!-- Logs Activity Container -->
@@ -416,19 +377,17 @@
   <!-- ══════════════════════════════════════════════════════════
        ACTIVE UPLOADS PANEL
        ══════════════════════════════════════════════════════════ -->
-  <div id="upload-panel" class="fixed text-textDark rounded-card hidden flex flex-col overflow-hidden transition-all duration-300">
+  <div id="upload-panel" class="fixed hidden flex flex-col overflow-hidden transition-all duration-300">
     <div class="bg-paper px-4 py-3 border-b border-cloud flex items-center justify-between" id="upload-panel-header">
       <div class="flex items-center gap-2 min-w-0">
         <span class="w-2 h-2 rounded-full animate-ping shrink-0" id="upload-panel-ping" style="background-color:#ff5a00"></span>
         <span class="text-[11px] font-semibold tracking-wider uppercase text-textDark truncate" id="upload-panel-title">Unggah: 0 file</span>
       </div>
       <div class="flex items-center gap-1 shrink-0">
-        <button id="upload-panel-toggle" class="text-textGray hover:text-textDark font-semibold text-xs focus:outline-none w-8 h-8 flex items-center justify-center rounded-full hover:bg-cloud transition" title="Minimize/Expand" aria-label="Minimize/Expand">
-          <svg id="upload-chevron" class="w-3.5 h-3.5 transition-transform duration-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
-          </svg>
+        <button id="upload-panel-toggle" class="btn-icon" title="Minimize/Expand" aria-label="Minimize/Expand" style="width:2rem;height:2rem">
+          <svg id="upload-chevron" class="w-3.5 h-3.5 transition-transform duration-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
         </button>
-        <button id="upload-panel-close" class="text-textGray hover:text-textDark font-semibold text-base leading-none focus:outline-none w-8 h-8 flex items-center justify-center rounded-full hover:bg-cloud transition" title="Sembunyikan Panel" aria-label="Sembunyikan Panel">&times;</button>
+        <button id="upload-panel-close" class="btn-icon" title="Sembunyikan Panel" aria-label="Sembunyikan Panel" style="width:2rem;height:2rem">&times;</button>
       </div>
     </div>
     <div id="upload-items" class="p-3 overflow-y-auto custom-scrollbar flex-1 transition-all duration-300"></div>
@@ -438,37 +397,31 @@
        SETTINGS MODAL
        ══════════════════════════════════════════════════════════ -->
   <div id="settings-modal" class="fixed inset-0 bg-obsidian/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
-    <div class="bg-surface border border-cloud rounded-card w-full max-w-md text-textDark shadow-md overflow-hidden max-h-[92vh] overflow-y-auto custom-scrollbar">
+    <div class="card w-full max-w-md overflow-hidden max-h-[92vh] overflow-y-auto custom-scrollbar">
       <div class="px-6 py-4 bg-paper border-b border-cloud flex justify-between items-center">
-        <h3 class="text-sm font-semibold text-textDark tracking-wide">Pengaturan</h3>
-        <button class="text-textGray hover:text-textDark text-xl font-semibold leading-none w-8 h-8 flex items-center justify-center rounded-full hover:bg-cloud transition" id="settings-close" aria-label="Tutup">&times;</button>
+        <h3 class="text-sm font-semibold tracking-wide">Pengaturan</h3>
+        <button class="btn-icon" id="settings-close" aria-label="Tutup" style="width:2rem;height:2rem">&times;</button>
       </div>
 
       <form id="settings-form" class="p-6 flex flex-col gap-6">
         <div class="flex flex-col gap-2">
-          <label for="s-chatid" class="text-[11px] font-semibold text-textGray uppercase tracking-wider">Storage Chat ID (Group/Channel)</label>
-          <input type="text" id="s-chatid" class="w-full bg-paper border border-cloud rounded-control focus:border-primary text-textDark text-sm outline-none px-4 py-2.5 transition" required autocomplete="off">
-          <span class="text-xs text-fog">ID grup/channel Telegram tempat berkas disimpan.</span>
+          <label for="s-chatid" class="text-[11px] font-semibold text-textGray uppercase tracking-wider">Storage Chat ID</label>
+          <input type="text" id="s-chatid" class="input" required autocomplete="off">
+          <span class="text-xs text-textGray/60">ID grup/channel Telegram tempat berkas disimpan.</span>
         </div>
 
-        <div id="settings-error" class="hidden text-xs bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-control"></div>
-        <div id="settings-success" class="hidden text-xs bg-emerald-50 border border-emerald-200 text-emerald-700 px-4 py-3 rounded-control"></div>
+        <div id="settings-error" class="hidden text-xs bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-control"></div>
+        <div id="settings-success" class="hidden text-xs bg-emerald-50 border border-emerald-200 text-emerald-600 px-4 py-3 rounded-control"></div>
 
         <div class="flex flex-col gap-2 pt-4 border-t border-cloud">
-          <button type="button" class="w-full bg-paper hover:bg-cloud text-textDark border border-cloud text-xs font-semibold uppercase tracking-wider py-2.5 rounded-control transition" id="btn-lock">
-            Kunci Drive
-          </button>
+          <button type="button" class="btn-ghost w-full py-2.5" id="btn-lock">Kunci Drive</button>
           <div class="flex gap-2">
-            <button type="button" class="flex-1 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-xs font-semibold uppercase tracking-wider py-2.5 rounded-control transition" id="btn-logout">
-              Keluar Sesi
-            </button>
-            <button type="button" class="flex-1 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-xs font-semibold uppercase tracking-wider py-2.5 rounded-control transition" id="btn-reset-drive">
-              Reset Drive
-            </button>
+            <button type="button" class="btn-danger flex-1 py-2.5" id="btn-logout">Keluar Sesi</button>
+            <button type="button" class="btn-danger flex-1 py-2.5" id="btn-reset-drive">Reset Drive</button>
           </div>
           <div class="flex gap-2 mt-2">
-            <button type="button" class="flex-1 border border-cloud hover:border-iron text-textDark text-xs font-semibold uppercase tracking-wider py-2.5 rounded-control transition" id="settings-cancel">Batal</button>
-            <button type="submit" class="flex-1 bg-primary hover:bg-accent text-white text-xs font-semibold uppercase tracking-wider py-2.5 rounded-control transition flex items-center justify-center gap-2" id="settings-save">
+            <button type="button" class="btn-ghost flex-1 py-2.5" id="settings-cancel">Batal</button>
+            <button type="submit" class="btn-primary flex-1 py-2.5" id="settings-save">
               <span>Simpan</span>
               <div class="spin hidden w-3.5 h-3.5 border-2 border-white rounded-full animate-spin" style="border-top-color:transparent"></div>
             </button>
@@ -482,16 +435,16 @@
        CONFIRM DIALOG
        ══════════════════════════════════════════════════════════ -->
   <div id="confirm-modal" class="fixed inset-0 bg-obsidian/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
-    <div class="bg-surface border border-cloud rounded-card w-full max-w-sm text-textDark shadow-md overflow-hidden">
+    <div class="card w-full max-w-sm overflow-hidden">
       <div class="px-5 py-3.5 bg-paper border-b border-cloud flex justify-between items-center">
-        <h3 class="text-sm font-semibold text-textDark tracking-wide" id="confirm-title">Konfirmasi</h3>
-        <button class="text-textGray hover:text-textDark text-lg font-semibold leading-none w-8 h-8 flex items-center justify-center rounded-full hover:bg-cloud transition" id="confirm-close" aria-label="Tutup">&times;</button>
+        <h3 class="text-sm font-semibold tracking-wide" id="confirm-title">Konfirmasi</h3>
+        <button class="btn-icon" id="confirm-close" aria-label="Tutup" style="width:2rem;height:2rem">&times;</button>
       </div>
       <div class="p-5 flex flex-col gap-5">
         <p id="confirm-message" class="text-sm text-textGray leading-relaxed"></p>
         <div class="flex gap-3 pt-3 border-t border-cloud">
-          <button type="button" class="flex-1 border border-cloud hover:border-iron text-textDark text-xs font-semibold uppercase tracking-wider py-2.5 rounded-control transition" id="confirm-btn-cancel">Batal</button>
-          <button type="button" class="flex-1 bg-red-600 hover:bg-red-500 text-white text-xs font-semibold uppercase tracking-wider py-2.5 rounded-control transition" id="confirm-btn-ok">Hapus</button>
+          <button type="button" class="btn-ghost flex-1 py-2.5" id="confirm-btn-cancel">Batal</button>
+          <button type="button" class="btn-danger flex-1 py-2.5" id="confirm-btn-ok">Hapus</button>
         </div>
       </div>
     </div>
@@ -500,7 +453,7 @@
   <!-- ══════════════════════════════════════════════════════════
        CONTEXT MENU
        ══════════════════════════════════════════════════════════ -->
-  <div id="ctx-menu" class="absolute bg-surface border border-cloud text-textDark py-1.5 rounded-control shadow-md w-44 z-50 hidden text-xs font-medium">
+  <div id="ctx-menu" class="absolute card py-1.5 w-44 z-50 hidden text-xs font-medium" style="box-shadow:var(--shadow-lg)">
     <button class="w-full text-left px-4 py-2.5 hover:bg-paper flex items-center gap-2.5 transition" id="ctx-download">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-3.5 h-3.5 text-textGray"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
       DOWNLOAD
@@ -527,31 +480,27 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-6 h-6"><polyline points="9 18 15 12 9 6"/></svg>
     </button>
 
-    <div class="lb-dialog bg-surface rounded-card w-full max-w-5xl text-textDark shadow-2xl relative overflow-hidden flex flex-col max-h-[92vh] border border-cloud">
-      <!-- Header -->
-      <div class="px-4 sm:px-5 py-3 bg-surface border-b border-cloud flex justify-between items-center shrink-0 gap-3">
+    <div class="lb-dialog card w-full max-w-5xl overflow-hidden flex flex-col max-h-[92vh]">
+      <div class="px-4 sm:px-5 py-3 border-b border-cloud flex justify-between items-center shrink-0 gap-3">
         <div class="flex items-center gap-2.5 overflow-hidden">
           <span id="lb-title-icon" class="w-5 h-5 shrink-0 flex items-center justify-center"></span>
-          <h3 class="text-sm font-semibold tracking-tight text-textDark truncate" id="lb-title-text">Pratinjau</h3>
+          <h3 class="text-sm font-semibold tracking-tight truncate" id="lb-title-text">Pratinjau</h3>
         </div>
-        <button class="w-9 h-9 shrink-0 rounded-full flex items-center justify-center text-textGray hover:text-textDark hover:bg-paper text-xl font-light leading-none focus:outline-none transition" id="lb-close" aria-label="Tutup">&times;</button>
+        <button class="btn-icon shrink-0" id="lb-close" aria-label="Tutup" style="width:2rem;height:2rem">&times;</button>
       </div>
 
-      <!-- Content -->
       <div class="lb-content p-4 sm:p-6 flex flex-col items-center justify-center flex-1 overflow-y-auto max-h-[74vh] custom-scrollbar">
         <div id="lb-loading" class="flex flex-col items-center gap-3">
-          <div class="w-8 h-8 border-4 border-primary rounded-full animate-spin" style="border-top-color:transparent"></div>
-          <p class="text-xs font-medium text-textGray">Mengunduh…</p>
+          <div class="w-8 h-8 border-2 border-primary rounded-full animate-spin" style="border-top-color:transparent"></div>
+          <p class="text-xs font-medium text-textGray">Mengunduh...</p>
         </div>
 
-        <img id="lb-img" class="max-w-full max-h-[70vh] object-contain rounded-control hidden shadow-lg" alt="">
-        <video id="lb-video" class="max-w-full max-h-[70vh] rounded-control hidden shadow-lg bg-obsidian" controls playsinline></video>
+        <img id="lb-img" class="max-w-full max-h-[70vh] object-contain rounded-control hidden" alt="">
+        <video id="lb-video" class="max-w-full max-h-[70vh] rounded-control hidden bg-obsidian" controls playsinline></video>
         <iframe id="lb-pdf" class="w-full h-[70vh] rounded-control hidden bg-surface border border-cloud" title="Pratinjau PDF"></iframe>
-
         <pre id="lb-text" class="w-full h-[70vh] rounded-control hidden text-xs font-mono p-4 bg-surface border border-cloud text-left overflow-y-auto custom-scrollbar whitespace-pre-wrap select-text leading-relaxed text-textDark" style="margin:0"></pre>
 
-        <!-- Audio player card -->
-        <div id="lb-audio-container" class="hidden flex flex-col items-center justify-center p-6 sm:p-8 bg-surface border border-cloud rounded-card w-full max-w-md gap-4 shadow-sm">
+        <div id="lb-audio-container" class="hidden flex flex-col items-center justify-center p-6 sm:p-8 card w-full max-w-md gap-4">
           <div class="w-20 h-20 bg-paper rounded-full flex items-center justify-center border border-cloud animate-[spin_8s_linear_infinite]" id="audio-disc">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="w-10 h-10 text-textDark">
               <circle cx="12" cy="12" r="3"/>
@@ -566,34 +515,32 @@
           <audio id="lb-audio" class="w-full mt-2" controls></audio>
         </div>
 
-        <div id="lb-nopreview" class="flex flex-col items-center gap-4 text-textGray hidden p-8 bg-surface border border-cloud rounded-card w-full max-w-sm shadow-sm">
+        <div id="lb-nopreview" class="flex flex-col items-center gap-4 text-textGray hidden p-8 card w-full max-w-sm">
           <div class="w-16 h-16 bg-paper rounded-full flex items-center justify-center border border-cloud">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="w-8 h-8 text-ash"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="w-8 h-8 text-textGray/60"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
           </div>
           <div class="text-center flex flex-col gap-1">
-            <p class="text-xs font-semibold uppercase tracking-wider text-iron">Pratinjau tidak tersedia</p>
-            <p class="text-[11px] text-fog">Unduh berkas untuk membukanya secara lokal</p>
+            <p class="text-xs font-semibold uppercase tracking-wider text-textGray">Pratinjau tidak tersedia</p>
+            <p class="text-[11px] text-textGray/60">Unduh berkas untuk membukanya secara lokal</p>
           </div>
         </div>
       </div>
 
-      <!-- Action Bar -->
-      <div class="bg-surface px-4 sm:px-5 py-3.5 border-t border-cloud flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
+      <div class="px-4 sm:px-5 py-3.5 border-t border-cloud flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
         <div class="min-w-0">
           <h4 class="lb-name text-sm font-semibold truncate text-textDark" id="lb-name">-</h4>
           <p class="lb-size text-xs text-textGray font-medium" id="lb-size">-</p>
         </div>
-
         <div class="flex gap-2 shrink-0 overflow-x-auto custom-scrollbar">
-          <a href="" id="lb-download" class="bg-primary hover:bg-accent text-white text-xs font-semibold py-2.5 px-4 rounded-full transition flex items-center gap-1.5 whitespace-nowrap" download>
+          <a href="" id="lb-download" class="btn-primary text-xs py-2.5 px-4 rounded-full" download>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-3.5 h-3.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             Unduh
           </a>
-          <a href="" id="lb-download-original" class="border border-cloud hover:bg-paper text-textGray hover:text-textDark text-xs font-semibold py-2.5 px-4 rounded-full transition flex items-center gap-1.5 whitespace-nowrap" download>
+          <a href="" id="lb-download-original" class="btn-ghost text-xs py-2.5 px-4 rounded-full" download>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-3.5 h-3.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             Asli
           </a>
-          <button id="lb-delete" class="border border-cloud hover:border-red-400 hover:bg-red-50 text-red-600 text-xs font-semibold py-2.5 px-4 rounded-full transition flex items-center gap-1.5 whitespace-nowrap">
+          <button id="lb-delete" class="btn-danger text-xs py-2.5 px-4 rounded-full">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-3.5 h-3.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
             Hapus
           </button>
@@ -605,7 +552,7 @@
   <!-- ══════════════════════════════════════════════════════════
        BULK ACTIONS BAR
        ══════════════════════════════════════════════════════════ -->
-  <div id="bulk-bar" class="fixed bottom-6 left-1/2 -translate-x-1/2 px-4 sm:px-6 py-3 rounded-card text-textDark flex items-center justify-between gap-4 hidden">
+  <div id="bulk-bar" class="fixed bottom-6 left-1/2 -translate-x-1/2 px-4 sm:px-6 py-3 flex items-center justify-between gap-4 hidden">
     <div class="flex items-center gap-2.5 text-xs font-semibold text-textDark whitespace-nowrap">
       <span class="flex h-2.5 w-2.5 relative">
         <span class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" style="background-color:#ff5a00"></span>
@@ -613,41 +560,34 @@
       </span>
       <span><span id="bulk-count">0</span> DIPILIH</span>
     </div>
-
     <div class="flex items-center gap-2">
-      <button id="bulk-select-all" class="text-[10px] font-bold uppercase tracking-wider px-3 py-2 border border-cloud hover:border-iron text-textDark rounded-control transition whitespace-nowrap">Pilih Semua</button>
-
-      <button id="bulk-download" class="bg-primary hover:bg-accent text-white text-[10px] font-bold uppercase tracking-wider py-2 px-3.5 rounded-control transition flex items-center gap-1 whitespace-nowrap">
+      <button id="bulk-select-all" class="btn-ghost text-[10px] font-bold uppercase tracking-wider py-2 px-3">Pilih Semua</button>
+      <button id="bulk-download" class="btn-primary text-[10px] font-bold uppercase tracking-wider py-2 px-3.5">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-3 h-3"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         Unduh
       </button>
-
-      <button id="bulk-delete" class="bg-red-600 hover:bg-red-500 text-white text-[10px] font-bold uppercase tracking-wider py-2 px-3.5 rounded-control transition flex items-center gap-1 whitespace-nowrap">
+      <button id="bulk-delete" class="btn-danger text-[10px] font-bold uppercase tracking-wider py-2 px-3.5">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-3 h-3"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
         Hapus
       </button>
-
-      <button id="bulk-cancel" class="text-[10px] font-medium text-textGray hover:text-textDark uppercase px-2 py-2 transition">Batal</button>
+      <button id="bulk-cancel" class="btn-ghost text-[10px] font-medium uppercase py-2 px-3">Batal</button>
     </div>
   </div>
 
   <!-- ══════════════════════════════════════════════════════════
        TOAST
        ══════════════════════════════════════════════════════════ -->
-  <div id="toast" class="fixed bottom-6 left-6 bg-obsidian border border-obsidian text-white px-5 py-3 rounded-control text-xs font-medium shadow-md z-50 flex items-center gap-3 hidden">
+  <div id="toast" class="fixed bottom-6 left-6 bg-obsidian border border-obsidian text-white px-5 py-3 rounded-control text-xs font-medium shadow-lg z-50 flex items-center gap-3 hidden">
     <span class="w-2 h-2 rounded-full animate-pulse" style="background-color:#ff5a00"></span>
     <span id="toast-msg">Notifikasi</span>
   </div>
 
   <!-- ══════════════════════════════════════════════════════════
        SHELL BEHAVIOUR
-       app.js is a closed IIFE, so the drawer + toolbar mirroring live here.
-       Everything below only touches elements app.js does not own.
        ══════════════════════════════════════════════════════════ -->
   <script>
     (function () {
       'use strict';
-
       var body = document.body;
       var sidebar = document.getElementById('sidebar');
       var backdrop = document.getElementById('sidebar-backdrop');
@@ -669,7 +609,6 @@
         if (btnMenu) btnMenu.setAttribute('aria-expanded', 'false');
       }
 
-      // Below md the sidebar is an off-canvas drawer; at md+ it is a static column.
       function applyLayout() {
         if (isMobile()) {
           sidebar.style.position = 'fixed';
@@ -700,7 +639,6 @@
       if (btnClose) btnClose.addEventListener('click', closeDrawer);
       if (backdrop) backdrop.addEventListener('click', closeDrawer);
 
-      // Picking a category on mobile should reveal the results, not keep the menu open.
       sidebar.addEventListener('click', function (e) {
         if (!isMobile()) return;
         if (e.target.closest('.nav-btn')) closeDrawer();
@@ -710,9 +648,6 @@
         if (e.key === 'Escape' && body.classList.contains('sidebar-open')) closeDrawer();
       });
 
-      // On phones the toolbar buttons are far away in the sidebar-less header, so
-      // mirror the two most-used ones (theme, settings) into the mobile top bar.
-      // Clicks are forwarded to the real controls, which app.js owns.
       var actions = document.getElementById('topbar-actions');
       if (actions) {
         [['btn-theme', 'Ubah Tema',

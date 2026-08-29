@@ -1,1968 +1,1469 @@
-/* ===========================================================================
- Telegram Cloud Drive — Frontend Logic (MTProto + Sequential Uploads)
- =========================================================================== */
-(() => {
- 'use strict';
-
- /* ───── State ───── */
- let allFiles = [];
- let visibleFiles = [];
- let selectedKeys = new Set();
- let currentCategory = 'all';
- let searchQuery = '';
- let isConfigured = false;
- let layoutMode = 'grid'; // 'grid' | 'list'
- let currentAuthId = null; // Temp auth session ID for OTP login
- let currentFolderPath = '';
- const activeXHRs = new Map();
-
- /* ───── DOM Refs ───── */
- const $ = s => document.querySelector(s);
- const $$ = s => document.querySelectorAll(s);
-
- const wizardEl = $('#setup-wizard');
- const loginGateEl = $('#login-gate');
- const loginForm = $('#login-form');
- const dashboardEl = $('#app-dashboard');
- const setupFormStep1 = $('#setup-form-step1');
- const setupFormStep2 = $('#setup-form-step2');
- const settingsModal = $('#settings-modal');
- const settingsForm = $('#settings-form');
- const searchInput = $('#search-input');
- const searchClear = $('#search-clear');
- const filesContainer = $('#files-container');
- const logsContainer = $('#logs-container');
- const logsTbody = $('#logs-tbody');
- const filesLoading = $('#files-loading');
- const emptyState = $('#empty-state');
- const uploadPanel = $('#upload-panel');
- const uploadItems = $('#upload-items');
- const fileInput = $('#file-input');
- const ctxMenu = $('#ctx-menu');
- const lightbox = $('#lightbox');
- const toastEl = $('#toast');
-
- let ctxTarget = null; // File data for context menu
- let lightboxFile = null;
-
- /* ===================================================================
- LOGIN GATE
- =================================================================== */
-
- // Wrap fetch once so any 401 from any call bounces the user back to the
- // login screen instead of failing silently deep in the UI.
- const rawFetch = window.fetch.bind(window);
- window.fetch = async (...args) => {
- const res = await rawFetch(...args);
- const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url) || '';
- if (res.status === 401) {
- if (url.includes('/api/') && !url.includes('/api/auth/login')) showLoginGate();
- }
- // 409 means the Telegram session was revoked. Nothing the user does in the
- // UI will work until they log in again, so raise a banner that stays put.
- if (res.status === 409 && url.includes('/api/')) {
- res.clone().json().then(d => {
- if (d && d.sessionRevoked) showSessionBanner(d.error);
- }).catch(() => {});
- }
- return res;
- };
-
- // Persistent, dismissable warning shown when Telegram has revoked our session.
- function showSessionBanner(message) {
- const banner = $('#session-banner');
- if (!banner) return;
- const msgEl = $('#session-banner-msg');
- if (msgEl && message) msgEl.textContent = message;
- banner.classList.remove('hidden');
- setConnDot(false);
- }
-
- function hideSessionBanner() {
- const banner = $('#session-banner');
- if (banner) banner.classList.add('hidden');
- setConnDot(true);
- }
-
- // The sidebar pill used to say "TELEGRAM OK" unconditionally — the same lie the
- // server used to tell. Keep it honest: it follows the real session state.
- function setConnDot(ok) {
- const box = $('#conn-dot');
- if (!box) return;
- const dot = box.querySelector('.dot');
- const label = box.querySelector('span:last-child');
- if (dot) dot.style.backgroundColor = ok ? '#10b981' : '#d93025';
- if (label) label.textContent = ok ? 'TELEGRAM OK' : 'SESI BERAKHIR';
- }
-
- function showLoginGate() {
- loginGateEl.classList.remove('hidden');
- wizardEl.classList.add('hidden');
- dashboardEl.classList.add('hidden');
- }
-
- loginForm.addEventListener('submit', async e => {
- e.preventDefault();
- const errEl = $('#login-error');
- const spinEl = loginForm.querySelector('.spin');
- const input = $('#login-password');
-
- errEl.classList.add('hidden');
- spinEl.classList.remove('hidden');
-
- try {
- const res = await rawFetch('/api/auth/login', {
- method: 'POST',
- headers: { 'Content-Type': 'application/json' },
- body: JSON.stringify({ password: input.value })
- });
- const data = await res.json();
-
- if (data.success) {
- input.value = '';
- loginGateEl.classList.add('hidden');
- init();
- } else {
- errEl.textContent = data.error || 'Password salah.';
- errEl.classList.remove('hidden');
- }
- } catch (err) {
- errEl.textContent = 'Kesalahan jaringan: ' + err.message;
- errEl.classList.remove('hidden');
- } finally {
- spinEl.classList.add('hidden');
- }
- });
-
- /* ===================================================================
- HELPERS
- =================================================================== */
- function formatSize(b) {
- if (!b) return '0 B';
- const u = ['B', 'KB', 'MB', 'GB', 'TB'];
- const i = Math.floor(Math.log(b) / Math.log(1024));
- return (b / Math.pow(1024, i)).toFixed(i ? 1 : 0) + ' ' + u[i];
- }
-
- function formatDate(iso) {
- if (!iso) return '-';
- const d = new Date(iso);
- return d.toLocaleDateString('id-ID', {
- day: 'numeric',
- month: 'short',
- year: 'numeric',
- hour: '2-digit',
- minute: '2-digit'
- });
- }
-
- function catIconSvg(cat) {
- // Google-Drive-style: each file type keeps its own signature color in both themes.
- const color = {
- image: 'text-[#1e8e3e]',   // green
- video: 'text-[#d93025]',   // red
- audio: 'text-[#a142f4]',   // purple
- folder: 'text-[#f9ab00]',  // amber
- document: 'text-[#1a73e8]',// blue
- }[cat] || 'text-[#5f6368]';
- const c = `cat-${cat} ${color}`;
- switch (cat) {
- case 'image': return `<svg class="${c}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="18" height="18"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>`;
- case 'video': return `<svg class="${c}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="18" height="18"><path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/></svg>`;
- case 'audio': return `<svg class="${c}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="18" height="18"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>`;
- case 'folder': return `<svg class="${c}" viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2z"/></svg>`;
- default: return `<svg class="${c}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="18" height="18"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>`;
- }
- }
-
- function getExt(name) {
- const d = name.lastIndexOf('.');
- return d === -1 ? '' : name.substring(d + 1).toUpperCase();
- }
-
- // Detect image files by extension, stripping .partN suffix (e.g. "DSCF0024.JPG.part1" → JPG)
- const IMAGE_EXTS = new Set(['JPG','JPEG','PNG','GIF','BMP','WEBP','HEIC','HEIF','TIFF','TIF','SVG','ICO','AVIF']);
- function isImageByFilename(name) {
- // Strip .partN suffix if present
- const stripped = name.replace(/\.part\d+$/i, '');
- const ext = getExt(stripped);
- return IMAGE_EXTS.has(ext);
- }
-
-
- function toast(msg) {
- $('#toast-msg').textContent = msg;
- toastEl.classList.remove('hidden');
- clearTimeout(toast._t);
- toast._t = setTimeout(() => toastEl.classList.add('hidden'), 3500);
- }
-
- function showConfirm(title, message) {
- return new Promise(resolve => {
- const modal = $('#confirm-modal');
- $('#confirm-title').textContent = title;
- $('#confirm-message').textContent = message;
- modal.classList.remove('hidden');
-
- const onOk = () => {
- cleanup();
- resolve(true);
- };
- const onCancel = () => {
- cleanup();
- resolve(false);
- };
- const cleanup = () => {
- modal.classList.add('hidden');
- $('#confirm-btn-ok').removeEventListener('click', onOk);
- $('#confirm-btn-cancel').removeEventListener('click', onCancel);
- $('#confirm-close').removeEventListener('click', onCancel);
- };
-
- $('#confirm-btn-ok').addEventListener('click', onOk);
- $('#confirm-btn-cancel').addEventListener('click', onCancel);
- $('#confirm-close').addEventListener('click', onCancel);
- });
- }
-
-
- /* ===================================================================
- INIT — check config
- =================================================================== */
- async function init() {
- // Pre-fill custom API ID & Hash from localStorage if available
- const savedApiId = localStorage.getItem('drive-custom-api-id');
- const savedApiHash = localStorage.getItem('drive-custom-api-hash');
- if (savedApiId) {
- $('#api-id').value = savedApiId;
- $('.adv-details').open = true; // Auto-expand advanced options
- }
- if (savedApiHash) {
- $('#api-hash').value = savedApiHash;
- }
-
- try {
- const res = await fetch('/api/settings');
- const data = await res.json();
- // Surface a revoked session immediately on load, rather than waiting for the
- // user to attempt an upload and watch it fail.
- if (data.sessionRevoked) showSessionBanner();
- else hideSessionBanner();
- if (data.configured && data.connected) {
- if (data.chatId) {
- isConfigured = true;
- wizardEl.classList.add('hidden');
- dashboardEl.classList.remove('hidden');
- loadFiles();
- loadStats();
- syncBackgroundUploads();
- setInterval(syncBackgroundUploads, 3000);
- } else {
- // Connected but missing Storage Chat ID, go to Step 3
- wizardEl.classList.remove('hidden');
- dashboardEl.classList.add('hidden');
- setupFormStep1.classList.add('hidden');
- setupFormStep2.classList.add('hidden');
- const setupFormStep3 = $('#setup-form-step3');
- setupFormStep3.classList.remove('hidden');
- }
- } else {
- wizardEl.classList.remove('hidden');
- dashboardEl.classList.add('hidden');
- setupFormStep1.classList.remove('hidden');
- setupFormStep2.classList.add('hidden');
- $('#setup-form-step3').classList.add('hidden');
- }
- } catch {
- wizardEl.classList.remove('hidden');
- }
- }
-
- /* ===================================================================
- SETUP WIZARD (OTP LOGIN FLOW)
- =================================================================== */
- 
- // Step 1: Send OTP Code
- setupFormStep1.addEventListener('submit', async e => {
- e.preventDefault();
- const errEl = $('#step1-error');
- const spinEl = setupFormStep1.querySelector('.spin');
- const btnText = setupFormStep1.querySelector('span');
-
- errEl.classList.add('hidden');
- spinEl.classList.remove('hidden');
- btnText.textContent = 'Mengirim Kode...';
-
- try {
- const rawApiId = $('#api-id').value.trim();
- const rawApiHash = $('#api-hash').value.trim();
-
- // Save custom credentials to localStorage so the user never has to re-enter them
- if (rawApiId) localStorage.setItem('drive-custom-api-id', rawApiId);
- else localStorage.removeItem('drive-custom-api-id');
-
- if (rawApiHash) localStorage.setItem('drive-custom-api-hash', rawApiHash);
- else localStorage.removeItem('drive-custom-api-hash');
-
- const body = {
- apiId: rawApiId ? parseInt(rawApiId) : null,
- apiHash: rawApiHash ? rawApiHash : null,
- phone: $('#phone-number').value.trim()
- };
-
- const res = await fetch('/api/auth/send-code', {
- method: 'POST',
- headers: { 'Content-Type': 'application/json' },
- body: JSON.stringify(body)
- });
- const data = await res.json();
-
- if (data.success) {
- currentAuthId = data.authId;
- // Swap forms
- setupFormStep1.classList.add('hidden');
- setupFormStep2.classList.remove('hidden');
- toast('OTP Code dikirim ke Telegram Anda!');
- } else {
- errEl.textContent = data.error || 'Gagal mengirim OTP.';
- errEl.classList.remove('hidden');
- }
- } catch (err) {
- errEl.textContent = 'Kesalahan jaringan: ' + err.message;
- errEl.classList.remove('hidden');
- } finally {
- spinEl.classList.add('hidden');
- btnText.textContent = 'Kirim Kode OTP';
- }
- });
-
- // Step 2: Verify OTP and login
- setupFormStep2.addEventListener('submit', async e => {
- e.preventDefault();
- const errEl = $('#step2-error');
- const sucEl = $('#step2-success');
- const spinEl = setupFormStep2.querySelector('.spin');
- const btnText = setupFormStep2.querySelector('span');
-
- errEl.classList.add('hidden');
- sucEl.classList.add('hidden');
- spinEl.classList.remove('hidden');
- btnText.textContent = 'Memverifikasi...';
-
- try {
- const body = {
- authId: currentAuthId,
- code: $('#otp-code').value.trim(),
- password: $('#password-2fa').value.trim()
- };
-
- const res = await fetch('/api/auth/sign-in', {
- method: 'POST',
- headers: { 'Content-Type': 'application/json' },
- body: JSON.stringify(body)
- });
- const data = await res.json();
-
- if (data.success) {
- sucEl.textContent = 'Berhasil Terhubung!';
- sucEl.classList.remove('hidden');
- 
- // Fetch settings to check if Chat ID is configured
- const setRes = await fetch('/api/settings');
- const setData = await setRes.json();
- 
- setTimeout(() => {
- if (setData.chatId) {
- isConfigured = true;
- wizardEl.classList.add('hidden');
- dashboardEl.classList.remove('hidden');
- loadFiles();
- loadStats();
- } else {
- // Chat ID not set, show Step 3
- setupFormStep2.classList.add('hidden');
- $('#setup-form-step3').classList.remove('hidden');
- }
- }, 1200);
- } else if (data.requires2FA) {
- // Reveal 2FA password field since Telegram needs it
- $('#field-2fa').classList.remove('hidden');
- errEl.textContent = data.error;
- errEl.classList.remove('hidden');
- } else {
- errEl.textContent = data.error || 'OTP tidak valid.';
- errEl.classList.remove('hidden');
- }
- } catch (err) {
- errEl.textContent = err.message;
- errEl.classList.remove('hidden');
- } finally {
- spinEl.classList.add('hidden');
- btnText.textContent = 'Masuk';
- }
- });
-
- // Step 3: Configure Storage Chat ID
- const setupFormStep3 = $('#setup-form-step3');
- setupFormStep3.addEventListener('submit', async e => {
- e.preventDefault();
- const errEl = $('#step3-error');
- const sucEl = $('#step3-success');
- const spinEl = setupFormStep3.querySelector('.spin');
- const btnText = setupFormStep3.querySelector('span');
-
- errEl.classList.add('hidden');
- sucEl.classList.add('hidden');
- spinEl.classList.remove('hidden');
- btnText.textContent = 'Menyimpan...';
-
- try {
- const body = { chatId: $('#storage-chat-id').value.trim() };
- const res = await fetch('/api/settings', {
- method: 'POST',
- headers: { 'Content-Type': 'application/json' },
- body: JSON.stringify(body)
- });
- const data = await res.json();
-
- if (data.success) {
- sucEl.textContent = 'Penyimpanan terhubung!';
- sucEl.classList.remove('hidden');
- isConfigured = true;
- setTimeout(() => {
- wizardEl.classList.add('hidden');
- dashboardEl.classList.remove('hidden');
- loadFiles();
- loadStats();
- // Reset setup wizard forms
- setupFormStep1.classList.remove('hidden');
- setupFormStep2.classList.add('hidden');
- setupFormStep3.classList.add('hidden');
- setupFormStep1.reset();
- setupFormStep2.reset();
- setupFormStep3.reset();
- }, 1200);
- } else {
- errEl.textContent = data.error || 'Gagal menyimpan.';
- errEl.classList.remove('hidden');
- }
- } catch (err) {
- errEl.textContent = err.message;
- errEl.classList.remove('hidden');
- } finally {
- spinEl.classList.add('hidden');
- btnText.textContent = 'Simpan & Masuk ke Drive';
- }
- });
-
- // Back Button
- $('#btn-back-step1').addEventListener('click', () => {
- setupFormStep2.classList.add('hidden');
- setupFormStep1.classList.remove('hidden');
- });
-
- /* ===================================================================
- SETTINGS MODAL
- =================================================================== */
- $('#btn-settings').addEventListener('click', async () => {
- settingsModal.classList.remove('hidden');
- try {
- const res = await fetch('/api/settings');
- const d = await res.json();
- $('#s-chatid').value = d.chatId || '';
- } catch { /* ignore */ }
- });
-
- $('#settings-close').addEventListener('click', () => settingsModal.classList.add('hidden'));
- $('#settings-cancel').addEventListener('click', () => settingsModal.classList.add('hidden'));
- settingsModal.addEventListener('click', e => { if (e.target === settingsModal) settingsModal.classList.add('hidden'); });
-
- settingsForm.addEventListener('submit', async e => {
- e.preventDefault();
- const errEl = $('#settings-error');
- const sucEl = $('#settings-success');
- errEl.classList.add('hidden');
- sucEl.classList.add('hidden');
-
- try {
- const body = { chatId: $('#s-chatid').value.trim() };
- const res = await fetch('/api/settings', {
- method: 'POST',
- headers: { 'Content-Type': 'application/json' },
- body: JSON.stringify(body)
- });
- const data = await res.json();
- if (data.success) {
- sucEl.textContent = 'Penyimpanan berhasil diperbarui!';
- sucEl.classList.remove('hidden');
- setTimeout(() => settingsModal.classList.add('hidden'), 800);
- loadFiles();
- } else {
- errEl.textContent = data.error || 'Gagal menyimpan.';
- errEl.classList.remove('hidden');
- }
- } catch (err) {
- errEl.textContent = err.message;
- errEl.classList.remove('hidden');
- }
- });
-
- // Lock drive — ends the drive session but keeps the Telegram login intact
- $('#btn-lock').addEventListener('click', async () => {
- try { await fetch('/api/auth/logout', { method: 'POST' }); } catch {}
- settingsModal.classList.add('hidden');
- allFiles = [];
- showLoginGate();
- });
-
- // Logout / Keluar
- $('#btn-logout').addEventListener('click', () => {
- if (!confirm('Yakin ingin keluar? Semua sesi Telegram di perangkat ini akan ditutup.')) return;
- fetch('/api/logout', { method: 'POST' }).catch(() => {});
- settingsModal.classList.add('hidden');
- dashboardEl.classList.add('hidden');
- wizardEl.classList.remove('hidden');
- isConfigured = false;
- allFiles = [];
- toast('Berhasil keluar sesi.');
- });
-
- // Sync button
- $('#btn-sync').addEventListener('click', async () => {
- const btn = $('#btn-sync');
- const icon = btn.querySelector('.sync-icon');
- const text = btn.querySelector('.sync-text');
- const origText = text.textContent;
-
- btn.disabled = true;
- icon.classList.add('animate-spin');
- text.textContent = 'Syning...';
- toast('Memulai sinkronisasi dari channel Telegram...', 'info');
-
- try {
- const res = await fetch('/api/sync', { method: 'POST' });
- const data = await res.json();
- toast(data.message || 'Sinkronisasi dimulai!', 'success');
- // Poll sync status until done
- await pollSyncStatus();
- } catch (err) {
- toast('Gagal sync: ' + err.message, 'error');
- } finally {
- btn.disabled = false;
- icon.classList.remove('animate-spin');
- text.textContent = origText;
- }
- });
-
- async function pollSyncStatus() {
- return new Promise((resolve) => {
- const interval = setInterval(async () => {
- try {
- const res = await fetch('/api/sync-status');
- const data = await res.json();
- if (!data.syncing) {
- clearInterval(interval);
- toast('Sinkronisasi selesai!', 'success');
- loadFiles();
- loadStats();
- resolve();
- }
- } catch {
- // ignore
- }
- }, 1000);
- // Max wait 5 minutes
- setTimeout(() => {
- clearInterval(interval);
- resolve();
- }, 300000);
- });
- }
-
- /* ===================================================================
- FILE LIST & ACTIVITY LOG LOADING
- =================================================================== */
- async function loadFiles() {
- if (currentCategory === 'logs') {
- loadLogs();
- return;
- }
- filesLoading.classList.remove('hidden');
- emptyState.classList.add('hidden');
- filesContainer.innerHTML = '';
- try {
- const res = await fetch('/api/files');
- allFiles = await res.json();
- render();
- } catch { toast('Gagal memuat daftar berkas.'); }
- filesLoading.classList.add('hidden');
- }
-
- async function loadStats() {
- try {
- const res = await fetch('/api/stats');
- const s = await res.json();
- const bytes = s.totalSize || s.total_size || 0;
- $('#storage-used').textContent = formatSize(bytes);
- const pct = Math.min(100, (bytes / (15 * 1024 * 1024 * 1024)) * 100);
- $('#storage-fill').style.width = pct + '%';
- } catch { /* ignore */ }
- }
-
- async function loadLogs() {
- filesLoading.classList.remove('hidden');
- logsTbody.innerHTML = '';
- try {
- const res = await fetch('/api/logs');
- const logs = await res.json();
- if (logs.length === 0) {
- logsTbody.innerHTML = `<tr><td colspan="4" class="p-8 text-center text-textGray font-mono">Belum ada catatan aktivitas.</td></tr>`;
- } else {
- logs.forEach(log => {
- let badgeClass = '';
- if (log.status === 'error') {
- badgeClass = 'bg-red-500/15 text-red-500 ';
- } else if (log.action === 'Auth' || log.action === 'Config') {
- badgeClass = 'bg-blue-500/15 text-blue-500 ';
- } else {
- badgeClass = 'bg-emerald-500/15 text-emerald-500 ';
- }
- 
- const statusColor = log.status === 'error' ? 'text-red-500' : 'text-emerald-500';
- 
- logsTbody.insertAdjacentHTML('beforeend', `
- <tr class="border-b border-cloud hover:bg-paper transition duration-150">
- <td class="p-3 text-textGray font-mono">${formatDate(log.timestamp)}</td>
- <td class="p-3"><span class="px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase ${badgeClass}">${log.action}</span></td>
- <td class="p-3 text-textDark max-w-sm truncate" title="${log.details}">${log.details}</td>
- <td class="p-3 font-mono font-bold ${statusColor}">${log.status.toUpperCase()}</td>
- </tr>
- `);
- });
- }
- } catch (err) {
- console.error(err);
- toast('Gagal memuat log aktivitas.');
- }
- filesLoading.classList.add('hidden');
- }
-
- /* ===================================================================
- RENDER FILES
- =================================================================== */
- /* ===================================================================
- RENDER FILES
- =================================================================== */
- function folderCard(folderName, fileCount, fullPath) {
- return `
- <div class="relative bg-paper border border-cloud rounded-card p-3.5 hover:shadow-md transition-all duration-300 group hover:scale-[1.02] flex items-center gap-3.5 cursor-pointer select-none" data-folder="${fullPath}">
- <div class="w-10 h-10 bg-primary/10 rounded-control flex items-center justify-center border border-primary/20 text-primary shrink-0 group-hover:scale-105 transition-transform">
- <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-5 h-5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
- </div>
- <div class="overflow-hidden flex-1">
- <h4 class="text-xs font-semibold text-textDark truncate" title="${folderName}">${folderName}</h4>
- <p class="text-[9px] font-mono text-textGray mt-0.5">${fileCount} berkas</p>
- </div>
- </div>`;
- }
-
- function folderRow(folderName, fileCount, fullPath) {
- return `
- <div class="flex items-center justify-between p-3.5 hover:bg-paper transition duration-150 cursor-pointer select-none text-xs" data-folder="${fullPath}">
- <div class="flex items-center gap-2.5 overflow-hidden flex-1 pr-4">
- <div class="w-8 h-8 rounded-control bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shrink-0">
- <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
- </div>
- <span class="text-xs font-semibold text-textDark truncate" title="${folderName}">${folderName}</span>
- </div>
- <span class="w-24 shrink-0 text-right font-mono text-textGray pr-4">${fileCount} berkas</span>
- <span class="w-8 shrink-0"></span>
- </div>`;
- }
-
- function updateBreadcrumb() {
- const bc = $('#folder-breadcrumb');
- if (!bc) return;
- if (currentCategory !== 'folder') {
- bc.classList.add('hidden');
- return;
- }
- bc.classList.remove('hidden');
- bc.innerHTML = '';
-
- // Add Root link
- const rootLink = document.createElement('span');
- rootLink.className = 'hover:text-primary cursor-pointer font-bold';
- rootLink.textContent = 'DRIVE';
- rootLink.addEventListener('click', () => {
- currentFolderPath = "";
- render();
- });
- bc.appendChild(rootLink);
-
- if (currentFolderPath) {
- const parts = currentFolderPath.split('/');
- let accumPath = "";
- parts.forEach((p, idx) => {
- accumPath += (idx > 0 ? '/' : '') + p;
- const currentAccum = accumPath; // capture
- 
- const sep = document.createElement('span');
- sep.textContent = ' > ';
- bc.appendChild(sep);
-
- const link = document.createElement('span');
- link.className = 'hover:text-primary cursor-pointer truncate max-w-[120px] inline-block align-middle';
- link.textContent = p;
- link.title = p;
- link.addEventListener('click', () => {
- currentFolderPath = currentAccum;
- render();
- });
- bc.appendChild(link);
- });
- }
- }
-
- function renderFolderView() {
- let prefix = currentFolderPath ? currentFolderPath + '/' : '';
- let folderFiles = allFiles;
- 
- if (searchQuery) {
- const q = searchQuery.toLowerCase();
- folderFiles = folderFiles.filter(f => f.filename.toLowerCase().includes(q));
- }
- 
- // Filter files that are in this folder path prefix
- let filesInPath = folderFiles.filter(f => f.filename.startsWith(prefix));
- 
- let subfolders = new Map(); // name -> { count, fullPath }
- let filesHere = [];
- 
- filesInPath.forEach(f => {
- let relPath = f.filename.substring(prefix.length);
- let slashIdx = relPath.indexOf('/');
- if (slashIdx === -1) {
- // File at this level
- filesHere.push(f);
- } else {
- // Inside a subfolder
- let subfolderName = relPath.substring(0, slashIdx);
- let fullSubPath = prefix + subfolderName;
- if (subfolders.has(subfolderName)) {
- subfolders.get(subfolderName).count++;
- } else {
- subfolders.set(subfolderName, { count: 1, fullPath: fullSubPath });
- }
- }
- });
-
- filesContainer.innerHTML = '';
- const totalItems = subfolders.size + filesHere.length;
- emptyState.classList.toggle('hidden', totalItems > 0);
-
- if (layoutMode === 'grid') {
- filesContainer.className = 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3';
- } else {
- filesContainer.className = 'flex flex-col border border-cloud rounded-control overflow-hidden divide-y divide-neutral-100 bg-surface ';
- if (totalItems > 0) {
- const header = document.createElement('div');
- header.className = 'flex items-center justify-between p-3.5 bg-paper text-textGray font-mono text-[10px] font-bold uppercase tracking-wider border-b border-cloud select-none';
- header.innerHTML = `
- <div class="w-5 mr-3 shrink-0"></div>
- <div class="flex-1 pr-4">Nama</div>
- <div class="w-20 shrink-0 text-right pr-4">Keterangan</div>
- <div class="w-24 shrink-0 text-right hidden sm:block pr-4"></div>
- <div class="w-8 shrink-0"></div>
- `;
- filesContainer.appendChild(header);
- }
- }
-
- // Render Subfolders first
- subfolders.forEach((info, name) => {
- const html = layoutMode === 'grid' ? folderCard(name, info.count, info.fullPath) : folderRow(name, info.count, info.fullPath);
- const temp = document.createElement('div');
- temp.innerHTML = html.trim();
- const el = temp.firstChild;
- 
- el.addEventListener('click', () => {
- currentFolderPath = info.fullPath;
- render();
- });
-
- filesContainer.appendChild(el);
- });
-
- // Render Files next
- filesHere.forEach(f => {
- const html = layoutMode === 'grid' ? gridCard(f) : listRow(f);
- const temp = document.createElement('div');
- temp.innerHTML = html.trim();
- const el = temp.firstChild;
- 
- el.addEventListener('click', () => openLightbox(f));
- el.addEventListener('contextmenu', e => { e.preventDefault(); showCtx(e, f); });
- 
- const dots = el.querySelector('.fc-dots');
- if (dots) {
- dots.addEventListener('click', e => { e.stopPropagation(); showCtx(e, f); });
- }
-
- // Checkbox event binding
- const cb = el.querySelector('.fc-checkbox, .fr-checkbox');
- if (cb) {
- cb.addEventListener('change', e => {
- const key = cb.dataset.key;
- const wrapper = cb.closest('label');
- const span = wrapper.querySelector('span');
- if (cb.checked) {
- selectedKeys.add(key);
- wrapper.classList.remove('opacity-0');
- wrapper.classList.add('opacity-100', 'border-primary', 'bg-primary');
- if (span) span.className = 'w-2 h-2 bg-white rounded-[1px] transition scale-100';
- el.classList.add('ring-2', 'ring-primary', 'border-primary', 'bg-primary/5');
- } else {
- selectedKeys.delete(key);
- wrapper.classList.remove('opacity-100', 'border-primary', 'bg-primary');
- wrapper.classList.add('opacity-0');
- if (span) span.className = 'w-2 h-2 bg-primary rounded-[1px] transition scale-0';
- el.classList.remove('ring-2', 'ring-primary', 'border-primary', 'bg-primary/5');
- }
- updateBulkBar();
- });
- }
-
- filesContainer.appendChild(el);
- });
-
- updateBulkBar();
- }
-
- function render() {
- updateBreadcrumb();
-
- let list = allFiles;
- 
- if (currentCategory === 'folder') {
- renderFolderView();
- return;
- }
-
- if (currentCategory !== 'all') {
- list = list.filter(f => f.category === currentCategory);
- }
- if (searchQuery) {
- const q = searchQuery.toLowerCase();
- list = list.filter(f => f.filename.toLowerCase().includes(q));
- }
-
- // 1. Sort Filter
- const sortVal = $('#filter-sort').value;
- if (sortVal === 'newest') {
- list.sort((a, b) => new Date(b.uploaded_at) - new Date(a.uploaded_at));
- } else if (sortVal === 'oldest') {
- list.sort((a, b) => new Date(a.uploaded_at) - new Date(b.uploaded_at));
- } else if (sortVal === 'largest') {
- list.sort((a, b) => b.total_size - a.total_size);
- } else if (sortVal === 'smallest') {
- list.sort((a, b) => a.total_size - b.total_size);
- } else if (sortVal === 'name-asc') {
- list.sort((a, b) => a.filename.localeCompare(b.filename));
- } else if (sortVal === 'name-desc') {
- list.sort((a, b) => b.filename.localeCompare(a.filename));
- }
-
- // 2. Size Filter
- const sizeVal = $('#filter-size').value;
- if (sizeVal === 'small') {
- list = list.filter(f => f.total_size < 10 * 1024 * 1024); // < 10MB
- } else if (sizeVal === 'medium') {
- list = list.filter(f => f.total_size >= 10 * 1024 * 1024 && f.total_size <= 100 * 1024 * 1024); // 10MB-100MB
- } else if (sizeVal === 'large') {
- list = list.filter(f => f.total_size > 100 * 1024 * 1024); // > 100MB
- }
-
- // 3. Extension Filter
- const extVal = $('#filter-extension').value.trim().toLowerCase();
- if (extVal) {
- list = list.filter(f => getExt(f.filename).toLowerCase() === extVal);
- }
-
- visibleFiles = list;
-
- // Prune selectedKeys of elements no longer in allFiles
- const fileKeys = new Set(allFiles.map(f => f.file_key));
- for (const key of selectedKeys) {
- if (!fileKeys.has(key)) selectedKeys.delete(key);
- }
-
- filesContainer.innerHTML = '';
- emptyState.classList.toggle('hidden', list.length > 0);
-
- if (layoutMode === 'grid') {
- filesContainer.className = 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3';
- } else {
- filesContainer.className = 'flex flex-col border border-cloud rounded-control overflow-hidden divide-y divide-neutral-100 bg-surface ';
- if (list.length > 0) {
- const header = document.createElement('div');
- header.className = 'flex items-center justify-between p-3.5 bg-paper text-textGray font-mono text-[10px] font-bold uppercase tracking-wider border-b border-cloud select-none';
- header.innerHTML = `
- <div class="w-5 mr-3 shrink-0"></div>
- <div class="flex-1 pr-4">Nama File</div>
- <div class="w-20 shrink-0 text-right pr-4">Ukuran</div>
- <div class="w-24 shrink-0 text-right hidden sm:block pr-4">Diunggah</div>
- <div class="w-8 shrink-0"></div>
- `;
- filesContainer.appendChild(header);
- }
- }
-
- list.forEach(f => {
- const html = layoutMode === 'grid' ? gridCard(f) : listRow(f);
- const temp = document.createElement('div');
- temp.innerHTML = html.trim();
- const el = temp.firstChild;
-
- // Click to open preview modal instantly
- el.addEventListener('click', () => openLightbox(f));
-
- // Right click context menu
- el.addEventListener('contextmenu', e => {
- e.preventDefault();
- showCtx(e, f);
- });
-
- // Actions dots click (List View)
- const dots = el.querySelector('.fc-dots');
- if (dots) {
- dots.addEventListener('click', e => {
- e.stopPropagation();
- showCtx(e, f);
- });
- }
-
- // Checkbox event binding
- const cb = el.querySelector('.fc-checkbox, .fr-checkbox');
- if (cb) {
- cb.addEventListener('change', e => {
- const key = cb.dataset.key;
- const wrapper = cb.closest('label');
- const span = wrapper.querySelector('span');
- if (cb.checked) {
- selectedKeys.add(key);
- wrapper.classList.remove('opacity-0');
- wrapper.classList.add('opacity-100', 'border-primary', 'bg-primary');
- if (span) span.className = 'w-2 h-2 bg-white rounded-[1px] transition scale-100';
- el.classList.add('ring-2', 'ring-primary', 'border-primary', 'bg-primary/5');
- } else {
- selectedKeys.delete(key);
- wrapper.classList.remove('opacity-100', 'border-primary', 'bg-primary');
- wrapper.classList.add('opacity-0');
- if (span) span.className = 'w-2 h-2 bg-primary rounded-[1px] transition scale-0';
- el.classList.remove('ring-2', 'ring-primary', 'border-primary', 'bg-primary/5');
- }
- updateBulkBar();
- });
- }
-
- filesContainer.appendChild(el);
- });
-
- updateBulkBar();
- }
-
- function updateBulkBar() {
- const bulkBar = $('#bulk-bar');
- const bulkCount = $('#bulk-count');
- const selectAllBtn = $('#bulk-select-all');
-
- if (selectedKeys.size === 0) {
- bulkBar.classList.add('hidden');
- return;
- }
-
- bulkBar.classList.remove('hidden');
- bulkCount.textContent = selectedKeys.size;
-
- // Check if all visible files are selected
- const allSelected = visibleFiles.length > 0 && visibleFiles.every(f => selectedKeys.has(f.file_key));
- selectAllBtn.textContent = allSelected ? 'Kosongkan Pilihan' : 'Pilih Semua';
- }
-
- function gridCard(f) {
- const ext = getExt(f.filename);
- const isChecked = selectedKeys.has(f.file_key) ? 'checked' : '';
- const wrapperClass = selectedKeys.has(f.file_key) 
- ? 'opacity-100 border-primary bg-primary' 
- : 'opacity-0 group-hover:opacity-100 border-cloud ';
- const spanClass = selectedKeys.has(f.file_key) ? 'scale-100 bg-white' : 'scale-0 bg-primary';
- const selectedCardClass = selectedKeys.has(f.file_key) ? 'ring-2 ring-primary border-primary bg-primary/5' : '';
-
- let thumbHtml = '';
- const isImgFile = isImageByFilename(f.filename);
- if (f.category === 'image' || isImgFile) {
- // Always try to load thumbnail for images (including .part files with image extensions)
- thumbHtml = `<img src="/api/thumb/${f.file_key}" loading="lazy" class="w-full h-full object-cover transition duration-300 group-hover:scale-105" alt="${f.filename}" onerror="this.style.display='none';this.nextSibling.style.display='flex'"><span class="font-mono text-[10px] font-bold tracking-wider text-textGray select-none" style="display:none">${ext || 'FILE'}</span>`;
- } else if (f.telegram_thumb_id) {
- thumbHtml = `<img src="/api/thumb/${f.file_key}" loading="lazy" class="w-full h-full object-cover transition duration-300 group-hover:scale-105" alt="${f.filename}">`;
- } else {
- thumbHtml = `<span class="font-mono text-[10px] font-bold tracking-wider text-textGray select-none">${ext || 'FILE'}</span>`;
- }
-
- return `
- <div class="relative bg-paper border border-cloud rounded-card p-2.5 hover:shadow-md transition-all duration-300 group hover:scale-[1.02] flex flex-col gap-2 cursor-pointer select-none ${selectedCardClass}" data-key="${f.file_key}">
- <label class="absolute top-2 left-2 z-10 w-4 h-4 bg-surface border rounded flex items-center justify-center cursor-pointer transition ${wrapperClass}" onclick="event.stopPropagation();">
- <input type="checkbox" class="fc-checkbox sr-only" data-key="${f.file_key}" ${isChecked}>
- <span class="w-2 h-2 rounded-[1px] transition ${spanClass}"></span>
- </label>
- <div class="w-full aspect-square bg-paper rounded-control flex items-center justify-center overflow-hidden border border-cloud ">
- ${thumbHtml}
- </div>
- <div class="flex items-center justify-between gap-1.5 mt-0.5">
- <div class="flex items-center gap-1.5 overflow-hidden flex-1">
- <span class="w-3.5 h-3.5 shrink-0">${catIconSvg(f.category)}</span>
- <span class="text-[11px] font-semibold truncate text-textDark " title="${f.filename}">${f.filename}</span>
- </div>
- <span class="text-[8px] font-mono text-textGray shrink-0">${formatSize(f.total_size)}</span>
- </div>
- </div>`;
- }
-
- function listRow(f) {
- const ext = getExt(f.filename);
- const isChecked = selectedKeys.has(f.file_key) ? 'checked' : '';
- const wrapperClass = selectedKeys.has(f.file_key) 
- ? 'border-primary bg-primary' 
- : 'border-cloud ';
- const spanClass = selectedKeys.has(f.file_key) ? 'scale-100 bg-white' : 'scale-0 bg-primary';
- const selectedCardClass = selectedKeys.has(f.file_key) ? 'bg-primary/5 border-l-4 border-l-primary' : '';
-
- let thumbHtml = '';
- const isImgFile2 = isImageByFilename(f.filename);
- if (f.category === 'image' || isImgFile2) {
- // Always try to load thumbnail for images (including .part files with image extensions)
- thumbHtml = `<img src="/api/thumb/${f.file_key}" loading="lazy" class="w-8 h-8 rounded-control object-cover shrink-0 border border-cloud " alt="" onerror="this.style.display='none';this.nextSibling.style.display='flex'"><div class="w-8 h-8 rounded-control bg-paper border border-cloud flex items-center justify-center text-[9px] font-mono font-bold text-textGray shrink-0 select-none" style="display:none">${ext || 'FILE'}</div>`;
- } else if (f.telegram_thumb_id) {
- thumbHtml = `<img src="/api/thumb/${f.file_key}" loading="lazy" class="w-8 h-8 rounded-control object-cover shrink-0 border border-cloud " alt="">`;
- } else {
- thumbHtml = `<div class="w-8 h-8 rounded-control bg-paper border border-cloud flex items-center justify-center text-[9px] font-mono font-bold text-textGray shrink-0 select-none">${ext || 'FILE'}</div>`;
- }
-
- return `
- <div class="flex items-center justify-between p-3.5 hover:bg-paper transition duration-150 cursor-pointer select-none text-xs ${selectedCardClass}" data-key="${f.file_key}">
- <label class="w-4.5 h-4.5 shrink-0 bg-surface border-2 rounded-control flex items-center justify-center cursor-pointer transition mr-3 ${wrapperClass}" onclick="event.stopPropagation();">
- <input type="checkbox" class="fr-checkbox sr-only" data-key="${f.file_key}" ${isChecked}>
- <span class="w-2 h-2 rounded-[2px] transition ${spanClass}"></span>
- </label>
- <div class="flex items-center gap-2.5 overflow-hidden flex-1 pr-4">
- ${thumbHtml}
- <span class="w-4 h-4 shrink-0">${catIconSvg(f.category)}</span>
- <span class="text-xs font-semibold text-textDark truncate" title="${f.filename}">${f.filename}</span>
- </div>
- <span class="w-20 shrink-0 text-right font-mono text-textGray pr-4">${formatSize(f.total_size)}</span>
- <span class="w-24 shrink-0 text-right text-textGray/80 hidden sm:block pr-4">${formatDate(f.uploaded_at)}</span>
- <span class="w-8 shrink-0 flex justify-center text-textGray hover:text-primary transition fc-dots"><svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></span>
- </div>`;
- }
-
-
- /* ===================================================================
- SIDEBAR NAV + SEARCH
- =================================================================== */
- $$('.nav-btn').forEach(btn => btn.addEventListener('click', () => {
- $$('.nav-btn').forEach(b => {
- b.className = 'nav-btn flex items-center justify-between px-3 py-2 rounded-control text-sm font-medium transition-colors text-textGray hover:bg-paper hover:text-textDark border border-transparent';
- });
- btn.className = 'nav-btn flex items-center justify-between px-3 py-2 rounded-control text-sm font-medium transition-colors bg-primary/10 text-primary border border-primary/20';
- currentCategory = btn.dataset.category;
- currentFolderPath = '';
-
- const titles = {
- all: 'Drive Saya',
- image: 'Gambar',
- video: 'Video',
- audio: 'Audio',
- document: 'Dokumen',
- folder: 'Folder Browsing',
- logs: 'Log Aktivitas'
- };
- $('#ws-title').textContent = titles[currentCategory] || 'Drive Saya';
-
- updateBreadcrumb();
-
- if (currentCategory === 'logs') {
- filesContainer.classList.add('hidden');
- emptyState.classList.add('hidden');
- logsContainer.classList.remove('hidden');
- loadLogs();
- } else {
- logsContainer.classList.add('hidden');
- filesContainer.classList.remove('hidden');
- loadFiles();
- }
- }));
-
- searchInput.addEventListener('input', () => {
- searchQuery = searchInput.value.trim();
- searchClear.classList.toggle('hidden', !searchQuery);
- render();
- });
- searchClear.addEventListener('click', () => {
- searchInput.value = '';
- searchQuery = '';
- searchClear.classList.add('hidden');
- render();
- });
-
- /* ===================================================================
- LAYOUT TOGGLE
- =================================================================== */
- $('#btn-layout').addEventListener('click', () => {
- layoutMode = layoutMode === 'grid' ? 'list' : 'grid';
- $('#ic-list').classList.toggle('hidden', layoutMode === 'list');
- $('#ic-grid').classList.toggle('hidden', layoutMode === 'grid');
- render();
- });
-
- /* ===================================================================
- THEME — light / dark toggle (token-driven, persisted)
- =================================================================== */
- // Restore saved preference; fall back to the OS setting on first visit.
- (function initTheme() {
- const saved = localStorage.getItem('drive-theme');
- const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
- const useDark = saved ? saved === 'dark' : prefersDark;
- document.documentElement.classList.toggle('dark', useDark);
- updateThemeIcon();
- })();
-
- $('#btn-theme').addEventListener('click', () => {
- document.documentElement.classList.toggle('dark');
- const isDark = document.documentElement.classList.contains('dark');
- localStorage.setItem('drive-theme', isDark ? 'dark' : 'light');
- updateThemeIcon();
- });
-
- function updateThemeIcon() {
- const isDark = document.documentElement.classList.contains('dark');
- $('#ic-sun').classList.toggle('hidden', isDark);
- $('#ic-moon').classList.toggle('hidden', !isDark);
- }
-
- /* ===================================================================
- SEQUENTIAL UPLOADS QUEUE
- =================================================================== */
- // Upload File action
- $('#btn-upload-file').addEventListener('click', () => fileInput.click());
- fileInput.addEventListener('change', () => {
- if (fileInput.files.length) uploadFiles(fileInput.files);
- fileInput.value = '';
- });
-
- // Upload Folder action
- const folderInput = $('#folder-input');
- $('#btn-upload-folder').addEventListener('click', () => folderInput.click());
- folderInput.addEventListener('change', () => {
- if (folderInput.files.length) uploadFiles(folderInput.files);
- folderInput.value = '';
- });
-
- // Drag & Drop
- const ws = document.body;
- const dropzone = $('#dropzone');
- let dragCount = 0;
- ws.addEventListener('dragenter', e => { e.preventDefault(); dragCount++; dropzone.classList.add('dragover'); });
- ws.addEventListener('dragleave', e => { e.preventDefault(); dragCount--; if (dragCount <= 0) { dragCount = 0; dropzone.classList.remove('dragover'); } });
- ws.addEventListener('dragover', e => e.preventDefault());
- ws.addEventListener('drop', e => { e.preventDefault(); dragCount = 0; dropzone.classList.remove('dragover'); if (e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files); });
-
- let uploadQueue = [];
- let isUploadingActive = false;
- let isUploadPanelCollapsed = false;
-
- function createUploadItemHTML(uploadId, filename, initialStatus) {
- const ext = getExt(filename);
- const isImg = isImageByFilename(filename);
- const cat = isImg ? 'image' : 'document';
- const icon = catIconSvg(cat);
- return `
- <div class="up-item py-2 first:pt-0 last:pb-0 border-b border-cloud last:border-b-0" id="${uploadId}">
- <div class="up-row flex items-center justify-between gap-3">
- <div class="flex items-center gap-2 overflow-hidden flex-1">
- <span class="w-4 h-4 text-textDark shrink-0">${icon}</span>
- <div class="flex flex-col overflow-hidden">
- <span class="text-xs font-medium text-textDark truncate pr-1" title="${filename}">${filename}</span>
- <span class="text-[10px] text-textGray font-medium mt-0.5 up-status">${initialStatus}</span>
- </div>
- </div>
- <div class="shrink-0 flex items-center justify-center">
- <button class="up-cancel-btn text-textGray hover:text-textDark transition rounded-full hover:bg-paper p-1 flex items-center justify-center focus:outline-none" data-id="${uploadId}" title="Batalkan unggahan">
- <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-3.5 h-3.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
- </button>
- <span class="up-success-icon hidden text-emerald-600">
- <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" class="w-4 h-4"><polyline points="20 6 9 17 4 12"/></svg>
- </span>
- </div>
- </div>
- <div class="w-full bg-cloud h-1 rounded-full overflow-hidden mt-1.5 up-bar">
- <div class="bg-obsidian h-full rounded-full transition-all duration-300 up-fill" style="width: 0%;"></div>
- </div>
- </div>
- `;
- }
-
- function updateUploadPanelHeader() {
- const activeCount = uploadQueue.length + (isUploadingActive ? 1 : 0);
- const titleEl = $('#upload-panel-title');
- const pingEl = $('#upload-panel-ping');
- 
- if (titleEl) {
- if (activeCount > 0) {
- titleEl.textContent = `Mengunggah ${activeCount} item...`;
- } else {
- titleEl.textContent = `Upload selesai`;
- }
- }
- if (pingEl) {
- if (activeCount > 0) {
- pingEl.classList.remove('hidden');
- } else {
- pingEl.classList.add('hidden');
- }
- }
- }
-
- function toggleUploadPanel(collapse) {
- const panel = $('#upload-panel');
- const items = $('#upload-items');
- const chevron = $('#upload-chevron');
- 
- if (collapse !== undefined) {
- isUploadPanelCollapsed = collapse;
- } else {
- isUploadPanelCollapsed = !isUploadPanelCollapsed;
- }
- 
- if (isUploadPanelCollapsed) {
- if (items) items.classList.add('hidden');
- if (panel) panel.style.maxHeight = '42px'; // Header height only
- if (chevron) chevron.classList.add('rotate-180');
- } else {
- if (items) items.classList.remove('hidden');
- if (panel) panel.style.maxHeight = '300px';
- if (chevron) chevron.classList.remove('rotate-180');
- }
- }
-
- // Setup panel toggle event listeners
- const panelHeader = $('#upload-panel-header');
- if (panelHeader) {
- panelHeader.addEventListener('click', e => {
- if (e.target.closest('#upload-panel-close') || e.target.closest('#upload-panel-toggle') || e.target.closest('.up-cancel-btn')) return;
- toggleUploadPanel();
- });
- }
- const panelToggle = $('#upload-panel-toggle');
- if (panelToggle) {
- panelToggle.addEventListener('click', e => {
- e.stopPropagation();
- toggleUploadPanel();
- });
- }
-
- function uploadFiles(fileList) {
- if (uploadQueue.length === 0 && !isUploadingActive) {
- uploadItems.innerHTML = '';
- }
- uploadPanel.classList.remove('hidden');
- toggleUploadPanel(false); // Expand
- 
- [...fileList].forEach(f => {
- const uploadId = 'up-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5);
- f._uploadId = uploadId;
- uploadQueue.push(f);
- 
- const displayName = f.webkitRelativePath || f.name;
- uploadItems.insertAdjacentHTML('beforeend', createUploadItemHTML(uploadId, displayName, 'Mengantre...'));
- });
- updateUploadPanelHeader();
- processNextUpload();
- }
-
- function processNextUpload() {
- updateUploadPanelHeader();
- if (isUploadingActive || uploadQueue.length === 0) return;
- 
- // Check if the next item is already cancelled
- const file = uploadQueue.shift();
- const uploadId = file._uploadId;
- const itemEl = document.getElementById(uploadId);
- 
- if (itemEl && itemEl.querySelector('.up-status').textContent === 'Dibatalkan') {
- processNextUpload();
- return;
- }
-
- isUploadingActive = true;
- updateUploadPanelHeader();
-
- const displayName = file.webkitRelativePath || file.name;
- const exists = allFiles.some(f => f.filename === displayName && f.total_size === file.size);
-
- if (exists) {
- toast(`Dilewati: "${displayName}" sudah ada.`);
- if (itemEl) {
- const statusEl = itemEl.querySelector('.up-status');
- const fillEl = itemEl.querySelector('.up-fill');
- const btn = itemEl.querySelector('.up-cancel-btn');
- if (statusEl) statusEl.textContent = 'Dilewati (sudah ada)';
- if (fillEl) {
- fillEl.style.width = '100%';
- fillEl.style.backgroundColor = 'var(--border-color)';
- }
- if (btn) btn.classList.add('hidden');
- }
- setTimeout(() => {
- isUploadingActive = false;
- processNextUpload();
- }, 400);
- return;
- }
-
- uploadSingle(file, uploadId, () => {
- isUploadingActive = false;
- processNextUpload();
- });
- }
-
- function uploadSingle(file, uploadId, onComplete) {
- const displayName = file.webkitRelativePath || file.name;
- const itemEl = document.getElementById(uploadId);
- if (!itemEl) {
- if (onComplete) onComplete();
- return;
- }
-
- const form = new FormData();
- form.append('file', file, displayName);
-
- const xhr = new XMLHttpRequest();
- let sse = null;
- let safetyTimeout = null;
-
- activeXHRs.set(uploadId, { xhr, sse, file });
-
- const resetSafetyTimeout = () => {
- if (safetyTimeout) clearTimeout(safetyTimeout);
- safetyTimeout = setTimeout(() => {
- console.warn(`Upload timeout for ${displayName}. Forcing skip to next file.`);
- toast(`Unggahan "${displayName}" melewati waktu tunggu (5 menit). Melanjutkan...`);
- cleanupAndComplete('timeout');
- }, 300000); // 5 minutes
- };
-
- const cleanupAndComplete = (reason = '') => {
- if (safetyTimeout) {
- clearTimeout(safetyTimeout);
- safetyTimeout = null;
- }
- if (sse) {
- sse.close();
- sse = null;
- }
- try {
- if (xhr.readyState !== 0 && xhr.readyState !== 4) {
- xhr.abort();
- }
- } catch (e) {}
-
- activeXHRs.delete(uploadId);
-
- const fillEl = itemEl.querySelector('.up-fill');
- const statusEl = itemEl.querySelector('.up-status');
- const cancelBtn = itemEl.querySelector('.up-cancel-btn');
- const successIcon = itemEl.querySelector('.up-success-icon');
- 
- if (cancelBtn) cancelBtn.classList.add('hidden');
-
- if (reason === 'timeout') {
- if (statusEl) statusEl.textContent = 'Timeout (Dilewati)';
- if (fillEl) {
- fillEl.style.width = '100%';
- fillEl.style.backgroundColor = 'var(--danger)';
- }
- } else if (reason === 'done') {
- if (statusEl) statusEl.textContent = '✓ Selesai';
- if (fillEl) {
- fillEl.style.width = '100%';
- fillEl.style.backgroundColor = 'var(--success)';
- }
- if (successIcon) successIcon.classList.remove('hidden');
- } else if (reason === 'cancelled') {
- if (statusEl) statusEl.textContent = 'Dibatalkan';
- if (fillEl) {
- fillEl.style.width = '100%';
- fillEl.style.backgroundColor = 'var(--danger)';
- }
- } else if (reason === 'error') {
- if (statusEl) statusEl.textContent = 'Gagal';
- if (fillEl) {
- fillEl.style.width = '100%';
- fillEl.style.backgroundColor = 'var(--danger)';
- }
- }
-
- updateUploadPanelHeader();
-
- if (onComplete) {
- const cb = onComplete;
- onComplete = null; // Prevent double trigger
- cb();
- }
- };
-
- try {
- resetSafetyTimeout();
-
- xhr.upload.addEventListener('progress', e => {
- resetSafetyTimeout();
- if (e.lengthComputable) {
- const pct = Math.round((e.loaded / e.total) * 100);
- itemEl.querySelector('.up-fill').style.width = (pct * 0.1) + '%'; // Browser-to-server represents 10%
- itemEl.querySelector('.up-status').textContent = `Mengunggah ke Server: ${pct}%`;
- }
- });
-
- xhr.addEventListener('load', () => {
- resetSafetyTimeout();
- if (xhr.status >= 200 && xhr.status < 300) {
- itemEl.querySelector('.up-status').textContent = 'Memproses di Telegram...';
- sse = new EventSource(`/api/upload-progress/${uploadId}`);
- 
- // Store sse in activeXHRs as well
- const act = activeXHRs.get(uploadId);
- if (act) act.sse = sse;
-
- sse.onmessage = ev => {
- resetSafetyTimeout();
- try {
- const data = JSON.parse(ev.data);
- if (data.status === 'uploading') {
- const pct = Math.round(data.uploaded); // uploaded is 0-100 from GramJS
- itemEl.querySelector('.up-fill').style.width = (10 + (pct * 0.9)) + '%'; // Telegram upload represents 90%
- itemEl.querySelector('.up-status').textContent = `Mengirim ke Telegram: ${pct}%`;
- } else if (data.status === 'done') {
- loadFiles();
- loadStats();
- cleanupAndComplete('done');
- } else if (data.status === 'error') {
- if (data.sessionRevoked) showSessionBanner(data.error);
- cleanupAndComplete('error');
- }
- } catch (err) {
- console.error('SSE JSON parse error:', err);
- }
- };
- sse.onerror = () => {
- cleanupAndComplete('error');
- };
- } else {
- // XHR bypasses the fetch interceptor, so the revoked-session case has to
- // be recognised here too — this is the path a failing upload actually takes.
- if (xhr.status === 401) {
- showLoginGate();
- } else if (xhr.status === 409) {
- try {
- const d = JSON.parse(xhr.responseText);
- if (d && d.sessionRevoked) showSessionBanner(d.error);
- } catch {}
- }
- cleanupAndComplete('error');
- }
- });
-
- xhr.addEventListener('error', () => {
- cleanupAndComplete('error');
- });
-
- xhr.addEventListener('abort', () => {
- cleanupAndComplete('cancelled');
- });
-
- xhr.open('POST', '/api/upload');
- xhr.setRequestHeader('X-Upload-Id', uploadId);
- xhr.send(form);
- } catch (err) {
- console.error('XHR start error:', err);
- cleanupAndComplete('error');
- }
- }
-
- function cancelUpload(uploadId) {
- const active = activeXHRs.get(uploadId);
- if (active) {
- try {
- if (active.xhr) active.xhr.abort();
- if (active.sse) active.sse.close();
- } catch (e) {}
- toast(`Membatalkan "${active.file.name}"...`);
- } else {
- const idx = uploadQueue.findIndex(f => f._uploadId === uploadId);
- if (idx !== -1) {
- const itemEl = document.getElementById(uploadId);
- if (itemEl) {
- const statusEl = itemEl.querySelector('.up-status');
- const fillEl = itemEl.querySelector('.up-fill');
- const btn = itemEl.querySelector('.up-cancel-btn');
- if (statusEl) statusEl.textContent = 'Dibatalkan';
- if (fillEl) {
- fillEl.style.width = '100%';
- fillEl.style.backgroundColor = 'var(--danger)';
- }
- if (btn) btn.classList.add('hidden');
- }
- uploadQueue.splice(idx, 1);
- updateUploadPanelHeader();
- toast('Antrean unggahan dibatalkan.');
- }
- }
- }
-
- // Handle click on cancel buttons in panel
- if (uploadItems) {
- uploadItems.addEventListener('click', e => {
- const btn = e.target.closest('.up-cancel-btn');
- if (btn) {
- e.stopPropagation();
- const uploadId = btn.dataset.id;
- cancelUpload(uploadId);
- }
- });
- }
-
- $('#upload-panel-close').addEventListener('click', e => {
- e.stopPropagation();
- uploadPanel.classList.add('hidden');
- });
-
- async function syncBackgroundUploads() {
- try {
- const res = await fetch('/api/uploads');
- const uploads = await res.json();
- 
- const keys = Object.keys(uploads);
- if (keys.length === 0) {
- updateUploadPanelHeader();
- return;
- }
-
- uploadPanel.classList.remove('hidden');
-
- keys.forEach(uploadId => {
- if (activeXHRs.has(uploadId)) return;
-
- const data = uploads[uploadId];
- let itemEl = document.getElementById(uploadId);
- 
- if (!itemEl) {
- uploadItems.insertAdjacentHTML('beforeend', createUploadItemHTML(uploadId, data.filename, 'Mengantre...'));
- itemEl = document.getElementById(uploadId);
- }
-
- const fillEl = itemEl.querySelector('.up-fill');
- const statusEl = itemEl.querySelector('.up-status');
- const cancelBtn = itemEl.querySelector('.up-cancel-btn');
- const successIcon = itemEl.querySelector('.up-success-icon');
-
- if (data.status === 'uploading') {
- const pct = Math.round(data.uploaded);
- fillEl.style.width = (10 + (pct * 0.9)) + '%';
- statusEl.textContent = `Mengirim ke Telegram: ${pct}%`;
- } else if (data.status === 'done') {
- statusEl.textContent = '✓ Selesai';
- fillEl.style.width = '100%';
- fillEl.style.backgroundColor = 'var(--success)';
- if (cancelBtn) cancelBtn.classList.add('hidden');
- if (successIcon) successIcon.classList.remove('hidden');
- } else if (data.status === 'error') {
- statusEl.textContent = 'Upload gagal ke Telegram';
- fillEl.style.backgroundColor = 'var(--danger)';
- if (cancelBtn) cancelBtn.classList.add('hidden');
- }
- });
- updateUploadPanelHeader();
- } catch (err) {
- console.log("Failed to sync background uploads:", err);
- }
- }
-
-
- /* ===================================================================
- CONTEXT MENU
- =================================================================== */
- function showCtx(e, file) {
- ctxTarget = file;
- ctxMenu.classList.remove('hidden');
- let x = e.clientX || e.pageX;
- let y = e.clientY || e.pageY;
- ctxMenu.style.left = Math.min(x, window.innerWidth - 190) + 'px';
- ctxMenu.style.top = Math.min(y, window.innerHeight - 140) + 'px';
- }
- document.addEventListener('click', () => ctxMenu.classList.add('hidden'));
- document.addEventListener('contextmenu', e => { if (!e.target.closest('[data-key]')) ctxMenu.classList.add('hidden'); });
-
- $('#ctx-download').addEventListener('click', () => { if (ctxTarget) downloadFile(ctxTarget); });
- $('#ctx-preview').addEventListener('click', () => { if (ctxTarget) openLightbox(ctxTarget); });
- $('#ctx-delete').addEventListener('click', () => { if (ctxTarget) deleteFile(ctxTarget); });
-
- /* ===================================================================
- DOWNLOAD & DELETE
- =================================================================== */
- function downloadFile(f) {
- const a = document.createElement('a');
- a.href = `/api/download/${f.file_key}`;
- a.download = f.filename;
- document.body.appendChild(a);
- a.click();
- document.body.removeChild(a);
- }
-
- async function deleteFile(f) {
- if (!await showConfirm('Hapus Berkas', `Apakah Anda yakin ingin menghapus "${f.filename}" secara permanen?`)) return;
- try {
- const res = await fetch(`/api/files/${f.file_key}`, { method: 'DELETE' });
- const d = await res.json();
- if (d.success) {
- toast('Berkas dihapus.');
- if (lightboxFile && lightboxFile.file_key === f.file_key) {
- closeLightbox();
- }
- loadFiles();
- loadStats();
- } else toast(d.error || 'Gagal menghapus.');
- } catch { toast('Error menghapus berkas.'); }
- }
-
- /* ===================================================================
- LIGHTBOX (Preview with Progressive Loading & Sliding Navigation)
- ================================================================== */
- function openLightbox(f) {
- if (!f) return;
- 
- // Stop any currently playing media before loading new
- const oldVid = $('#lb-video'); oldVid.pause(); oldVid.removeAttribute('src');
- const oldAud = $('#lb-audio'); oldAud.pause(); oldAud.removeAttribute('src');
- $('#lb-img').removeAttribute('src');
- $('#lb-pdf').removeAttribute('src');
- $('#lb-text').textContent = '';
-
- lightboxFile = f;
- lightbox.classList.remove('hidden');
- // Force reflow
- lightbox.offsetHeight;
- lightbox.classList.add('active');
- 
- document.body.style.overflow = 'hidden';
-
- // Reset lightbox loader elements
- $('#lb-loading').classList.remove('hidden');
- $('#lb-img').classList.add('hidden');
- $('#lb-video').classList.add('hidden');
- $('#lb-audio-container').classList.add('hidden');
- $('#lb-pdf').classList.add('hidden');
- $('#lb-text').classList.add('hidden');
- $('#lb-nopreview').classList.add('hidden');
-
- $('#lb-name').textContent = f.filename;
- $('#lb-size').textContent = formatSize(f.total_size);
- $('#lb-download').href = `/api/download/${f.file_key}`;
- $('#lb-download-original').href = `/api/download-original/${f.file_key}`;
-
- // Set Header Title & Icon
- const titleIcon = $('#lb-title-icon');
- const titleText = $('#lb-title-text');
- const catIcons = {
- image: `<svg class="w-5 h-5 text-[#1e8e3e]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>`,
- video: `<svg class="w-5 h-5 text-[#d93025]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/></svg>`,
- audio: `<svg class="w-5 h-5 text-[#a142f4]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>`,
- document: `<svg class="w-5 h-5 text-[#1a73e8]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>`
- };
- if (titleIcon) titleIcon.innerHTML = catIcons[f.category] || catIcons.document;
- if (titleText) titleText.textContent = f.filename;
-
- // Show/hide Slider Buttons
- const idx = visibleFiles.findIndex(item => item.file_key === f.file_key);
- const prevBtn = $('#lb-prev');
- const nextBtn = $('#lb-next');
-
- if (idx > 0) {
- prevBtn.classList.remove('hidden');
- } else {
- prevBtn.classList.add('hidden');
- }
-
- if (idx !== -1 && idx < visibleFiles.length - 1) {
- nextBtn.classList.remove('hidden');
- } else {
- nextBtn.classList.add('hidden');
- }
-
- const previewUrl = `/api/preview/${f.file_key}`;
- const streamUrl = `/api/stream/${f.file_key}`;
- const ext = getExt(f.filename).toLowerCase();
-
- if (f.category === 'image') {
- const img = $('#lb-img');
- // 1. Show low-res thumbnail instantly if available
- if (f.telegram_thumb_id) {
- img.src = `/api/thumb/${f.file_key}`;
- img.classList.remove('hidden');
- $('#lb-loading').classList.add('hidden');
- }
-
- // 2. Load high-res preview progressively in background
- const highRes = new Image();
- highRes.src = previewUrl;
- highRes.onload = () => {
- if (lightboxFile && lightboxFile.file_key === f.file_key) {
- img.src = previewUrl;
- img.classList.remove('hidden');
- $('#lb-loading').classList.add('hidden');
- }
- };
- highRes.onerror = () => {
- if (!f.telegram_thumb_id) {
- $('#lb-loading').classList.add('hidden');
- $('#lb-nopreview').classList.remove('hidden');
- }
- };
- } else if (f.category === 'video') {
- const vid = $('#lb-video');
- vid.src = streamUrl;
- vid.onloadeddata = () => { $('#lb-loading').classList.add('hidden'); vid.classList.remove('hidden'); };
- vid.onerror = () => { $('#lb-loading').classList.add('hidden'); $('#lb-nopreview').classList.remove('hidden'); };
- } else if (f.category === 'audio') {
- const aud = $('#lb-audio');
- const disc = $('#audio-disc');
- aud.src = streamUrl;
- $('#lb-audio-container').classList.remove('hidden');
- $('#lb-audio-title').textContent = f.filename;
- $('#lb-audio-size').textContent = formatSize(f.total_size);
- 
- if (disc) {
- disc.style.animationPlayState = 'paused';
- aud.onplay = () => { disc.style.animationPlayState = 'running'; };
- aud.onpause = () => { disc.style.animationPlayState = 'paused'; };
- aud.onended = () => { disc.style.animationPlayState = 'paused'; };
- }
- 
- aud.onloadeddata = () => { $('#lb-loading').classList.add('hidden'); };
- aud.onerror = () => {
- $('#lb-loading').classList.add('hidden');
- $('#lb-audio-container').classList.add('hidden');
- $('#lb-nopreview').classList.remove('hidden');
- };
- } else if (ext === 'pdf') {
- const pdf = $('#lb-pdf');
- pdf.src = previewUrl;
- pdf.onload = () => { $('#lb-loading').classList.add('hidden'); pdf.classList.remove('hidden'); };
- pdf.onerror = () => { $('#lb-loading').classList.add('hidden'); $('#lb-nopreview').classList.remove('hidden'); };
- } else if (['txt', 'js', 'json', 'css', 'html', 'md', 'xml', 'log'].includes(ext)) {
- fetch(previewUrl)
- .then(res => res.text())
- .then(txt => {
- if (lightboxFile && lightboxFile.file_key === f.file_key) {
- $('#lb-loading').classList.add('hidden');
- const pre = $('#lb-text');
- pre.textContent = txt.length > 50000 ? txt.substring(0, 50000) + '\n\n...[File Terlalu Besar, Dipotong]...' : txt;
- pre.classList.remove('hidden');
- }
- })
- .catch(() => {
- $('#lb-loading').classList.add('hidden');
- $('#lb-nopreview').classList.remove('hidden');
- });
- } else {
- $('#lb-loading').classList.add('hidden');
- $('#lb-nopreview').classList.remove('hidden');
- }
- }
-
- function closeLightbox() {
- lightbox.classList.remove('active');
- document.body.style.overflow = '';
- 
- // Cleanup media elements to halt playback after transition
- setTimeout(() => {
- if (!lightbox.classList.contains('active')) {
- lightbox.classList.add('hidden');
- const vid = $('#lb-video'); vid.pause(); vid.removeAttribute('src'); vid.load();
- const aud = $('#lb-audio'); aud.pause(); aud.removeAttribute('src'); aud.load();
- $('#lb-audio-container').classList.add('hidden');
- $('#lb-img').removeAttribute('src');
- $('#lb-pdf').removeAttribute('src');
- $('#lb-text').textContent = '';
- }
- }, 250);
- 
- lightboxFile = null;
- }
-
- $('#lb-close').addEventListener('click', closeLightbox);
- lightbox.addEventListener('click', e => { if (e.target === lightbox || e.target.classList.contains('lb-content')) closeLightbox(); });
-
- // Keyboard navigation shortcuts
- document.addEventListener('keydown', e => {
- if (lightbox.classList.contains('hidden')) return;
-
- if (e.key === 'Escape') {
- closeLightbox();
- } else if (e.key === 'ArrowLeft') {
- if (!lightboxFile) return;
- const idx = visibleFiles.findIndex(item => item.file_key === lightboxFile.file_key);
- if (idx > 0) openLightbox(visibleFiles[idx - 1]);
- } else if (e.key === 'ArrowRight') {
- if (!lightboxFile) return;
- const idx = visibleFiles.findIndex(item => item.file_key === lightboxFile.file_key);
- if (idx !== -1 && idx < visibleFiles.length - 1) openLightbox(visibleFiles[idx + 1]);
- }
- });
-
- // Slider buttons listeners
- $('#lb-prev').addEventListener('click', e => {
- e.stopPropagation();
- if (!lightboxFile) return;
- const idx = visibleFiles.findIndex(item => item.file_key === lightboxFile.file_key);
- if (idx > 0) openLightbox(visibleFiles[idx - 1]);
- });
-
- $('#lb-next').addEventListener('click', e => {
- e.stopPropagation();
- if (!lightboxFile) return;
- const idx = visibleFiles.findIndex(item => item.file_key === lightboxFile.file_key);
- if (idx !== -1 && idx < visibleFiles.length - 1) openLightbox(visibleFiles[idx + 1]);
- });
-
- $('#lb-delete').addEventListener('click', () => {
- if (lightboxFile) {
- deleteFile(lightboxFile);
- }
- });
-
- // Filter controls listeners
- $('#filter-sort').addEventListener('change', render);
- $('#filter-size').addEventListener('change', render);
- $('#filter-extension').addEventListener('input', render);
-
- /* ===================================================================
- BULK ACTIONS EVENTS
- =================================================================== */
- $('#bulk-cancel').addEventListener('click', () => {
- selectedKeys.clear();
- // Reset classes and states
- $$('.fc-checkbox, .fr-checkbox').forEach(cb => {
- cb.checked = false;
- const label = cb.closest('label');
- if (label) label.classList.remove('active');
- const card = cb.closest('.file-card, .list-row');
- if (card) card.classList.remove('selected');
- });
- updateBulkBar();
- });
-
- $('#bulk-select-all').addEventListener('click', () => {
- const allSelected = visibleFiles.length > 0 && visibleFiles.every(f => selectedKeys.has(f.file_key));
- if (allSelected) {
- visibleFiles.forEach(f => selectedKeys.delete(f.file_key));
- } else {
- visibleFiles.forEach(f => selectedKeys.add(f.file_key));
- }
- render();
- });
-
- $('#bulk-download').addEventListener('click', () => {
- if (selectedKeys.size === 0) return;
- const keys = Array.from(selectedKeys);
- const filesToDownload = allFiles.filter(f => selectedKeys.has(f.file_key));
- 
- toast(`Mengunduh ${filesToDownload.length} berkas...`);
-
- filesToDownload.forEach((f, index) => {
- setTimeout(() => {
- const a = document.createElement('a');
- a.href = `/api/download/${f.file_key}`;
- a.download = f.filename;
- document.body.appendChild(a);
- a.click();
- document.body.removeChild(a);
- }, index * 400); // 400ms delay to prevent browser blockages
- });
- });
-
- $('#bulk-delete').addEventListener('click', async () => {
- if (selectedKeys.size === 0) return;
- if (!await showConfirm('Hapus Berkas Terpilih', `Apakah Anda yakin ingin menghapus ${selectedKeys.size} berkas yang terpilih secara permanen?`)) return;
-
- const keys = Array.from(selectedKeys);
- let successCount = 0;
- let failCount = 0;
-
- toast(`Menghapus ${keys.length} berkas...`);
-
- await Promise.all(keys.map(async key => {
- try {
- const res = await fetch(`/api/files/${key}`, { method: 'DELETE' });
- const d = await res.json();
- if (d.success) successCount++;
- else failCount++;
- } catch {
- failCount++;
- }
- }));
-
- selectedKeys.clear();
- toast(`Berhasil menghapus ${successCount} berkas.${failCount > 0 ? ` Gagal: ${failCount}` : ''}`);
- loadFiles();
- loadStats();
- });
-
- // Reset drive listener
- $('#btn-reset-drive').addEventListener('click', async () => {
- if (!await showConfirm('Reset Drive', 'PERINGATAN: Tindakan ini akan menghapus seluruh berkas Anda secara permanen dari basis data dan cache lokal. Apakah Anda yakin ingin melanjutkan?')) return;
- 
- try {
- $('#btn-reset-drive').disabled = true;
- const res = await fetch('/api/reset', { method: 'POST' });
- const d = await res.json();
- if (d.success) {
- toast('Drive berhasil direset bersih.');
- settingsModal.classList.add('hidden');
- selectedKeys.clear();
- loadFiles();
- loadStats();
- } else {
- toast(d.error || 'Gagal melakukan reset.');
- }
- } catch {
- toast('Eror saat mereset drive.');
- } finally {
- $('#btn-reset-drive').disabled = false;
- }
- });
-
- /* ===================================================================
- BOOT
- =================================================================== */
- // Check the drive password before touching any other API.
- (async () => {
- try {
- const res = await rawFetch('/api/auth/status');
- const data = await res.json();
- if (data.authenticated) init();
- else showLoginGate();
- } catch {
- showLoginGate();
- }
- })();
+/* ============================================================================
+   Nexus Drive — Frontend Application
+   ----------------------------------------------------------------------------
+   Modern minimalis UI logic. Works with index.html + app.css.
+   Aligned with server.js API endpoints.
+   ========================================================================== */
+
+(function () {
+'use strict';
+
+/* ─────────────────────────────────────────────────────────────
+   STATE
+   ───────────────────────────────────────────────────────────── */
+var state = {
+  loggedIn: false,
+  setupNeeded: false,
+  authId: null,
+  files: [],
+  filteredFiles: [],
+  selectedIds: new Set(),
+  activeCategory: 'all',
+  searchQuery: '',
+  sortBy: 'newest',
+  sizeFilter: 'all',
+  extensionFilter: '',
+  layout: localStorage.getItem('drive-layout') || 'grid',
+  theme: localStorage.getItem('drive-theme') || (document.documentElement.classList.contains('dark') ? 'dark' : 'light'),
+  connectionState: 'connected',
+  isBulkMode: false,
+  lightboxIndex: -1,
+  lightboxList: [],
+  uploads: [],
+  contextFile: null,
+  logs: [],
+};
+
+/* ─────────────────────────────────────────────────────────────
+   UTILITIES
+   ───────────────────────────────────────────────────────────── */
+function $(id) { return document.getElementById(id); }
+function $$(sel, ctx) { return Array.prototype.slice.call((ctx || document).querySelectorAll(sel)); }
+
+function formatBytes(bytes) {
+  if (!bytes || bytes <= 0) return '0 B';
+  var units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  var i = Math.floor(Math.log(bytes) / Math.log(1024));
+  if (i >= units.length) i = units.length - 1;
+  return (bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1) + ' ' + units[i];
+}
+
+function formatDate(ts) {
+  if (!ts) return '-';
+  var d = new Date(ts);
+  if (isNaN(d.getTime())) return '-';
+  var now = new Date();
+  var diff = (now - d) / 1000;
+  if (diff < 60) return 'Baru saja';
+  if (diff < 3600) return Math.floor(diff / 60) + ' menit lalu';
+  if (diff < 86400) return Math.floor(diff / 3600) + ' jam lalu';
+  if (diff < 2592000) return Math.floor(diff / 86400) + ' hari lalu';
+  return d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function getFileExt(name) {
+  var parts = (name || '').split('.');
+  return parts.length > 1 ? parts.pop().toLowerCase() : '';
+}
+
+function getFileCategory(file) {
+  if (file.category === 'folder') return 'folder';
+  var ext = getFileExt(file.filename || file.name || '');
+  var mime = file.mime_type || '';
+  if (['jpg','jpeg','png','gif','webp','svg','bmp','ico','tiff'].indexOf(ext) >= 0 || mime.indexOf('image/') === 0) return 'image';
+  if (['mp4','mkv','avi','mov','webm','flv','wmv','m4v','mpg','mpeg'].indexOf(ext) >= 0 || mime.indexOf('video/') === 0) return 'video';
+  if (['mp3','wav','flac','aac','ogg','m4a','opus'].indexOf(ext) >= 0 || mime.indexOf('audio/') === 0) return 'audio';
+  return 'document';
+}
+
+var extColors = {
+  pdf: '#d93025', doc: '#1a73e8', docx: '#1a73e8', xls: '#1e8e3e', xlsx: '#1e8e3e',
+  ppt: '#f9ab00', pptx: '#f9ab00', zip: '#f9ab00', rar: '#f9ab00', '7z': '#f9ab00',
+  txt: '#5f6368', md: '#5f6368', json: '#5f6368', js: '#f9ab00', ts: '#1a73e8',
+  apk: '#1e8e3e', exe: '#d93025', dmg: '#5f6368', iso: '#5f6368',
+};
+
+function getExtColor(ext) { return extColors[ext] || '#5f6368'; }
+
+function escapeHtml(s) {
+  if (!s) return '';
+  return String(s).replace(/[&<>"']/g, function (c) {
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+
+function showToast(msg) {
+  var t = $('toast');
+  if (!t) return;
+  $('toast-msg').textContent = msg;
+  t.classList.remove('hidden');
+  clearTimeout(t._timer);
+  t._timer = setTimeout(function () { t.classList.add('hidden'); }, 3500);
+}
+
+function showConfirm(message, onConfirm, title) {
+  var modal = $('confirm-modal');
+  if (!modal) return;
+  $('confirm-title').textContent = title || 'Konfirmasi';
+  $('confirm-message').textContent = message;
+  modal.classList.remove('hidden');
+
+  var okBtn = $('confirm-btn-ok');
+  var cancelBtn = $('confirm-btn-cancel');
+  var closeBtn = $('confirm-close');
+
+  function cleanup() {
+    modal.classList.add('hidden');
+    okBtn.removeEventListener('click', handleOk);
+    cancelBtn.removeEventListener('click', handleClose);
+    closeBtn.removeEventListener('click', handleClose);
+  }
+  function handleOk() { cleanup(); if (onConfirm) onConfirm(); }
+  function handleClose() { cleanup(); }
+
+  okBtn.addEventListener('click', handleOk);
+  cancelBtn.addEventListener('click', handleClose);
+  closeBtn.addEventListener('click', handleClose);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   API
+   ───────────────────────────────────────────────────────────── */
+function api(path, opts) {
+  opts = opts || {};
+  if (opts.body && typeof opts.body === 'object' && !(opts.body instanceof FormData)) {
+    opts.headers = opts.headers || {};
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(opts.body);
+  }
+  return fetch(path, opts).then(function (res) {
+    if (res.status === 401) { handleAuthRequired(); throw new Error('Unauthorized'); }
+    return res.json().catch(function () { return {}; }).then(function (data) {
+      if (!res.ok) throw Object.assign(new Error(data.error || 'Request failed'), { data: data, status: res.status });
+      return data;
+    });
+  });
+}
+
+function handleAuthRequired() {
+  if (state.setupNeeded) showSetupWizard();
+  else showLoginGate();
+}
+
+/* ─────────────────────────────────────────────────────────────
+   AUTH
+   ───────────────────────────────────────────────────────────── */
+function showLoginGate() {
+  $('login-gate').classList.remove('hidden');
+  $('app-dashboard').classList.add('hidden');
+  $('setup-wizard').classList.add('hidden');
+  setTimeout(function () { var p = $('login-password'); if (p) p.focus(); }, 100);
+}
+
+function showSetupWizard() {
+  $('setup-wizard').classList.remove('hidden');
+  $('login-gate').classList.add('hidden');
+  $('app-dashboard').classList.add('hidden');
+}
+
+function showDashboard() {
+  $('app-dashboard').classList.remove('hidden');
+  $('login-gate').classList.add('hidden');
+  $('setup-wizard').classList.add('hidden');
+}
+
+function handleLogin(e) {
+  e.preventDefault();
+  var password = $('login-password').value;
+  var btn = e.target.querySelector('button[type="submit"]');
+  var spin = btn.querySelector('.spin');
+  var span = btn.querySelector('span');
+  span.textContent = 'Memproses...';
+  spin.classList.remove('hidden');
+
+  api('/api/auth/login', { method: 'POST', body: { password: password } })
+    .then(function () {
+      state.loggedIn = true;
+      showDashboard();
+      loadFiles();
+      checkConnection();
+    })
+    .catch(function (err) {
+      var errEl = $('login-error');
+      errEl.textContent = err.data && err.data.error ? err.data.error : 'Password salah';
+      errEl.classList.remove('hidden');
+    })
+    .finally(function () {
+      span.textContent = 'Masuk';
+      spin.classList.add('hidden');
+    });
+}
+
+/* ─────────────────────────────────────────────────────────────
+   SETUP WIZARD (Step 1: Send Code, Step 2: Sign In)
+   ───────────────────────────────────────────────────────────── */
+function handleSendCode(e) {
+  e.preventDefault();
+  var phone = $('phone-number').value.trim();
+  var apiId = $('api-id').value.trim();
+  var apiHash = $('api-hash').value.trim();
+  var errEl = $('step1-error');
+  var btn = $('btn-send-otp');
+  var spin = btn.querySelector('.spin');
+  var span = btn.querySelector('span');
+
+  errEl.classList.add('hidden');
+  span.textContent = 'Mengirim...';
+  spin.classList.remove('hidden');
+
+  api('/api/auth/send-code', { method: 'POST', body: { phone: phone, apiId: apiId, apiHash: apiHash } })
+    .then(function (data) {
+      state.authId = data.authId;
+      $('field-2fa').classList.add('hidden');
+      $('setup-form-step1').classList.add('hidden');
+      $('setup-form-step2').classList.remove('hidden');
+      setTimeout(function () { var p = $('otp-code'); if (p) p.focus(); }, 100);
+    })
+    .catch(function (err) {
+      errEl.textContent = err.data && err.data.error ? err.data.error : 'Gagal mengirim kode OTP';
+      errEl.classList.remove('hidden');
+    })
+    .finally(function () {
+      span.textContent = 'Kirim Kode OTP';
+      spin.classList.add('hidden');
+    });
+}
+
+function handleSignIn(e) {
+  e.preventDefault();
+  var code = $('otp-code').value.trim();
+  var password2fa = $('password-2fa').value;
+  var chatId = $('storage-chat-id').value.trim();
+  var errEl = $('step2-error');
+  var successEl = $('step2-success');
+  var btn = $('btn-verify-otp');
+  var spin = btn.querySelector('.spin');
+  var span = btn.querySelector('span');
+
+  errEl.classList.add('hidden');
+  successEl.classList.add('hidden');
+  span.textContent = 'Memverifikasi...';
+  spin.classList.remove('hidden');
+
+  var body = { authId: state.authId, code: code };
+  if (password2fa) body.password = password2fa;
+  if (chatId) body.chatId = chatId;
+
+  api('/api/auth/sign-in', { method: 'POST', body: body })
+    .then(function (data) {
+      if (data.requires2FA) {
+        $('field-2fa').classList.remove('hidden');
+        errEl.textContent = data.error || 'Akun dilindungi 2FA. Masukkan password 2FA.';
+        errEl.classList.remove('hidden');
+        var pw = $('password-2fa'); if (pw) pw.focus();
+        return;
+      }
+      successEl.textContent = 'Login berhasil! Drive siap digunakan.';
+      successEl.classList.remove('hidden');
+      setTimeout(function () {
+        state.setupNeeded = false;
+        state.loggedIn = true;
+        showDashboard();
+        loadFiles();
+        checkConnection();
+      }, 1000);
+    })
+    .catch(function (err) {
+      errEl.textContent = err.data && err.data.error ? err.data.error : 'Verifikasi gagal';
+      errEl.classList.remove('hidden');
+    })
+    .finally(function () {
+      span.textContent = 'Masuk';
+      spin.classList.add('hidden');
+    });
+}
+
+/* ─────────────────────────────────────────────────────────────
+   FILES
+   ───────────────────────────────────────────────────────────── */
+function loadFiles() {
+  $('files-loading').classList.remove('hidden');
+  api('/api/files')
+    .then(function (data) {
+      state.files = data.files || [];
+      applyFilters();
+      updateStorageInfo();
+    })
+    .catch(function (err) {
+      if (err.message !== 'Unauthorized') showToast('Gagal memuat berkas: ' + (err.message || ''));
+    })
+    .finally(function () {
+      $('files-loading').classList.add('hidden');
+    });
+}
+
+function applyFilters() {
+  var files = state.files.slice();
+
+  // Category filter
+  if (state.activeCategory === 'logs') {
+    showLogsView();
+    return;
+  }
+  if (state.activeCategory !== 'all') {
+    files = files.filter(function (f) { return getFileCategory(f) === state.activeCategory; });
+  }
+
+  // Search
+  if (state.searchQuery) {
+    var q = state.searchQuery.toLowerCase();
+    files = files.filter(function (f) { return (f.filename || f.name || '').toLowerCase().indexOf(q) >= 0; });
+  }
+
+  // Size filter
+  if (state.sizeFilter !== 'all') {
+    files = files.filter(function (f) {
+      var sz = f.total_size || f.size || 0;
+      if (state.sizeFilter === 'small') return sz < 10 * 1024 * 1024;
+      if (state.sizeFilter === 'medium') return sz >= 10 * 1024 * 1024 && sz < 100 * 1024 * 1024;
+      if (state.sizeFilter === 'large') return sz >= 100 * 1024 * 1024;
+      return true;
+    });
+  }
+
+  // Extension filter
+  if (state.extensionFilter) {
+    var exts = state.extensionFilter.split(',').map(function (s) { return s.trim().toLowerCase().replace(/^\./, ''); }).filter(Boolean);
+    if (exts.length) {
+      files = files.filter(function (f) { return exts.indexOf(getFileExt(f.filename || f.name)) >= 0; });
+    }
+  }
+
+  // Sort
+  switch (state.sortBy) {
+    case 'newest': files.sort(function (a, b) { return new Date(b.uploaded_at || 0) - new Date(a.uploaded_at || 0); }); break;
+    case 'oldest': files.sort(function (a, b) { return new Date(a.uploaded_at || 0) - new Date(b.uploaded_at || 0); }); break;
+    case 'largest': files.sort(function (a, b) { return (b.total_size || 0) - (a.total_size || 0); }); break;
+    case 'smallest': files.sort(function (a, b) { return (a.total_size || 0) - (b.total_size || 0); }); break;
+    case 'name-asc': files.sort(function (a, b) { return (a.filename || '').localeCompare(b.filename || ''); }); break;
+    case 'name-desc': files.sort(function (a, b) { return (b.filename || '').localeCompare(a.filename || ''); }); break;
+  }
+
+  state.filteredFiles = files;
+  renderFiles();
+}
+
+function renderFiles() {
+  var container = $('files-container');
+  var empty = $('empty-state');
+  var logsContainer = $('logs-container');
+
+  logsContainer.classList.add('hidden');
+  container.classList.remove('hidden');
+  container.innerHTML = '';
+  container.className = state.layout === 'grid'
+    ? 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3'
+    : 'flex flex-col gap-1';
+
+  if (state.filteredFiles.length === 0) {
+    empty.classList.remove('hidden');
+    container.classList.add('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+
+  if (state.layout === 'grid') renderGrid(container);
+  else renderList(container);
+}
+
+function renderGrid(container) {
+  state.filteredFiles.forEach(function (file) {
+    var card = document.createElement('div');
+    card.className = 'card p-3 flex flex-col gap-2 group relative cursor-pointer hover:shadow-md transition';
+    card.dataset.fileKey = file.file_key;
+
+    var isSelected = state.selectedIds.has(file.file_key);
+    if (isSelected) card.style.borderColor = 'rgb(var(--c-primary))';
+
+    var cat = getFileCategory(file);
+    var ext = getFileExt(file.filename || file.name || '');
+    var iconHtml = '';
+
+    // Thumbnail or icon
+    if (file.telegram_thumb_id) {
+      var thumbUrl = '/api/thumb/' + file.file_key;
+      iconHtml = '<div class="aspect-square rounded-control overflow-hidden bg-paper border border-cloud flex items-center justify-center">' +
+        '<img src="' + thumbUrl + '" class="w-full h-full object-cover" alt="" loading="lazy" onerror="this.parentElement.innerHTML=\'<div style=color:' + getExtColor(ext) + '>' + getFileIconSvg(cat, ext) + '</div>\'">' +
+        '</div>';
+    } else {
+      var iconColor = cat === 'image' ? '#1e8e3e' : cat === 'video' ? '#d93025' : cat === 'audio' ? '#a142f4' : getExtColor(ext);
+      iconHtml = '<div class="aspect-square rounded-control bg-paper border border-cloud flex items-center justify-center">' +
+        '<div style="color:' + iconColor + '">' + getFileIconSvg(cat, ext) + '</div>' +
+        '</div>';
+    }
+
+    // Checkbox (bulk mode)
+    var checkboxHtml = state.isBulkMode ?
+      '<div class="absolute top-2 left-2 z-10">' +
+      '<div class="w-5 h-5 rounded flex items-center justify-center transition" style="background:' + (isSelected ? 'rgb(var(--c-primary))' : 'rgb(var(--c-surface))') + ';border:2px solid ' + (isSelected ? 'rgb(var(--c-primary))' : 'rgb(var(--c-border))') + '">' +
+      (isSelected ? '<svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" class="w-3 h-3"><polyline points="20 6 9 17 4 12"/></svg>' : '') +
+      '</div></div>' : '';
+
+    var name = escapeHtml(file.filename || file.name || 'Unnamed');
+    var size = formatBytes(file.total_size || file.size);
+    var date = formatDate(file.uploaded_at);
+
+    card.innerHTML =
+      checkboxHtml +
+      iconHtml +
+      '<div class="min-w-0">' +
+      '<p class="text-xs font-medium truncate" title="' + name + '">' + name + '</p>' +
+      '</div>' +
+      '<div class="flex items-center justify-between text-[10px] text-textGray font-mono">' +
+      '<span>' + size + '</span>' +
+      '<span>' + date + '</span>' +
+      '</div>';
+
+    card.addEventListener('click', function (e) {
+      e.preventDefault();
+      if (state.isBulkMode) toggleSelect(file.file_key);
+      else openLightboxByFile(file);
+    });
+    card.addEventListener('contextmenu', function (e) {
+      e.preventDefault();
+      showContextMenu(e, file);
+    });
+
+    container.appendChild(card);
+  });
+}
+
+function renderList(container) {
+  state.filteredFiles.forEach(function (file) {
+    var row = document.createElement('div');
+    row.className = 'flex items-center gap-3 p-2.5 rounded-control hover:bg-paper cursor-pointer transition group';
+    row.dataset.fileKey = file.file_key;
+
+    var isSelected = state.selectedIds.has(file.file_key);
+    if (isSelected) {
+      row.style.background = 'rgb(var(--c-primary) / 0.06)';
+      row.style.borderLeft = '2px solid rgb(var(--c-primary))';
+    }
+
+    var cat = getFileCategory(file);
+    var ext = getFileExt(file.filename || file.name || '');
+    var iconColor = cat === 'image' ? '#1e8e3e' : cat === 'video' ? '#d93025' : cat === 'audio' ? '#a142f4' : getExtColor(ext);
+
+    var checkboxHtml = state.isBulkMode ?
+      '<div class="w-5 h-5 rounded flex items-center justify-center shrink-0 transition" style="background:' + (isSelected ? 'rgb(var(--c-primary))' : 'transparent') + ';border:2px solid ' + (isSelected ? 'rgb(var(--c-primary))' : 'rgb(var(--c-border))') + '">' +
+      (isSelected ? '<svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" class="w-3 h-3"><polyline points="20 6 9 17 4 12"/></svg>' : '') +
+      '</div>' : '';
+
+    var iconHtml = file.telegram_thumb_id ?
+      '<div class="w-10 h-10 rounded-control overflow-hidden bg-paper border border-cloud shrink-0"><img src="/api/thumb/' + file.file_key + '" class="w-full h-full object-cover" alt="" loading="lazy"></div>' :
+      '<div class="w-10 h-10 rounded-control bg-paper border border-cloud flex items-center justify-center shrink-0" style="color:' + iconColor + '">' + getFileIconSvg(cat, ext) + '</div>';
+
+    var name = escapeHtml(file.filename || file.name || 'Unnamed');
+    var size = formatBytes(file.total_size || file.size);
+    var date = formatDate(file.uploaded_at);
+
+    row.innerHTML =
+      checkboxHtml +
+      iconHtml +
+      '<div class="flex-1 min-w-0">' +
+      '<p class="text-sm font-medium truncate" title="' + name + '">' + name + '</p>' +
+      '<p class="text-[10px] text-textGray font-mono">' + date + '</p>' +
+      '</div>' +
+      '<span class="text-xs text-textGray font-mono shrink-0">' + size + '</span>' +
+      '<button class="btn-icon opacity-0 group-hover:opacity-100 transition shrink-0" style="width:2rem;height:2rem">' +
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg>' +
+      '</button>';
+
+    row.addEventListener('click', function (e) {
+      e.preventDefault();
+      if (state.isBulkMode) toggleSelect(file.file_key);
+      else openLightboxByFile(file);
+    });
+    row.addEventListener('contextmenu', function (e) {
+      e.preventDefault();
+      showContextMenu(e, file);
+    });
+
+    container.appendChild(row);
+  });
+}
+
+function getFileIconSvg(cat, ext) {
+  var size = 'w-8 h-8';
+  switch (cat) {
+    case 'image':
+      return '<svg class="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>';
+    case 'video':
+      return '<svg class="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>';
+    case 'audio':
+      return '<svg class="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>';
+    case 'folder':
+      return '<svg class="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>';
+    default:
+      return '<svg class="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   BULK SELECTION
+   ───────────────────────────────────────────────────────────── */
+function toggleSelect(fileKey) {
+  if (state.selectedIds.has(fileKey)) state.selectedIds.delete(fileKey);
+  else state.selectedIds.add(fileKey);
+  updateBulkBar();
+  applyFilters();
+}
+
+function toggleBulkMode() {
+  state.isBulkMode = !state.isBulkMode;
+  if (!state.isBulkMode) state.selectedIds.clear();
+  updateBulkBar();
+  applyFilters();
+}
+
+function updateBulkBar() {
+  var bar = $('bulk-bar');
+  if (state.isBulkMode && state.selectedIds.size > 0) {
+    bar.classList.remove('hidden');
+    $('bulk-count').textContent = state.selectedIds.size;
+  } else {
+    bar.classList.add('hidden');
+  }
+}
+
+function selectAll() {
+  state.filteredFiles.forEach(function (f) { state.selectedIds.add(f.file_key); });
+  updateBulkBar();
+  applyFilters();
+}
+
+function bulkDownload() {
+  state.selectedIds.forEach(function (key) {
+    var link = document.createElement('a');
+    link.href = '/api/download/' + key;
+    link.download = '';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  });
+}
+
+function bulkDelete() {
+  var count = state.selectedIds.size;
+  showConfirm('Hapus ' + count + ' berkas terpilih? Tindakan ini tidak dapat dibatalkan.', function () {
+    var keys = Array.from(state.selectedIds);
+    Promise.all(keys.map(function (key) {
+      return api('/api/files/' + key, { method: 'DELETE' });
+    })).then(function () {
+      showToast(count + ' berkas dihapus');
+      state.selectedIds.clear();
+      state.isBulkMode = false;
+      updateBulkBar();
+      loadFiles();
+    }).catch(function () {
+      showToast('Gagal menghapus beberapa berkas');
+    });
+  }, 'Hapus Berkas');
+}
+
+/* ─────────────────────────────────────────────────────────────
+   CONTEXT MENU
+   ───────────────────────────────────────────────────────────── */
+function showContextMenu(e, file) {
+  state.contextFile = file;
+  var menu = $('ctx-menu');
+  menu.classList.remove('hidden');
+  menu.style.left = Math.min(e.clientX, window.innerWidth - 200) + 'px';
+  menu.style.top = Math.min(e.clientY, window.innerHeight - 150) + 'px';
+}
+
+function hideContextMenu() {
+  var menu = $('ctx-menu');
+  if (menu) menu.classList.add('hidden');
+  state.contextFile = null;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   LIGHTBOX
+   ───────────────────────────────────────────────────────────── */
+function openLightboxByFile(file) {
+  var cat = getFileCategory(file);
+  if (cat === 'document' || cat === 'folder') {
+    var ext = getFileExt(file.filename || file.name || '');
+    if (ext === 'pdf' || ext === 'txt' || ext === 'md' || ext === 'json') {
+      openLightbox(file);
+    } else {
+      window.open('/api/download/' + file.file_key, '_blank');
+    }
+  } else {
+    openLightbox(file);
+  }
+}
+
+function openLightbox(file) {
+  var lb = $('lightbox');
+  lb.classList.remove('hidden');
+  lb.classList.add('active');
+
+  state.lightboxList = state.filteredFiles.filter(function (f) {
+    var c = getFileCategory(f);
+    return c === 'image' || c === 'video' || c === 'audio';
+  });
+  state.lightboxIndex = state.lightboxList.findIndex(function (f) { return f.file_key === file.file_key; });
+
+  loadLightboxContent(file);
+
+  var prevBtn = $('lb-prev');
+  var nextBtn = $('lb-next');
+  if (state.lightboxList.length > 1) {
+    prevBtn.classList.remove('hidden');
+    nextBtn.classList.remove('hidden');
+  } else {
+    prevBtn.classList.add('hidden');
+    nextBtn.classList.add('hidden');
+  }
+}
+
+function loadLightboxContent(file) {
+  $('lb-loading').classList.remove('hidden');
+  ['lb-img','lb-video','lb-pdf','lb-text','lb-audio-container','lb-nopreview'].forEach(function (id) {
+    $(id).classList.add('hidden');
+  });
+
+  var name = file.filename || file.name || 'Pratinjau';
+  $('lb-title-text').textContent = name;
+  $('lb-name').textContent = name;
+  $('lb-size').textContent = formatBytes(file.total_size || file.size);
+  $('lb-download').href = '/api/download/' + file.file_key;
+
+  var orig = $('lb-download-original');
+  orig.href = '/api/download-original/' + file.file_key;
+  orig.classList.remove('hidden'); // always show; server handles non-split gracefully
+
+  var cat = getFileCategory(file);
+  var ext = getFileExt(file.filename || file.name || '');
+
+  if (cat === 'image') {
+    var img = $('lb-img');
+    img.onload = function () {
+      $('lb-loading').classList.add('hidden');
+      img.classList.remove('hidden');
+    };
+    img.onerror = function () {
+      $('lb-loading').classList.add('hidden');
+      $('lb-nopreview').classList.remove('hidden');
+    };
+    img.src = '/api/preview/' + file.file_key;
+  } else if (cat === 'video') {
+    $('lb-loading').classList.add('hidden');
+    var vid = $('lb-video');
+    vid.src = '/api/stream/' + file.file_key;
+    vid.classList.remove('hidden');
+    vid.load();
+    vid.play().catch(function () {});
+  } else if (cat === 'audio') {
+    $('lb-loading').classList.add('hidden');
+    $('lb-audio-title').textContent = name;
+    $('lb-audio-size').textContent = formatBytes(file.total_size || file.size);
+    var aud = $('lb-audio');
+    aud.src = '/api/stream/' + file.file_key;
+    $('lb-audio-container').classList.remove('hidden');
+    aud.load();
+    aud.play().catch(function () {});
+  } else if (ext === 'pdf') {
+    $('lb-loading').classList.add('hidden');
+    var iframe = $('lb-pdf');
+    iframe.src = '/api/preview/' + file.file_key;
+    iframe.classList.remove('hidden');
+  } else if (ext === 'txt' || ext === 'md' || ext === 'json') {
+    $('lb-loading').classList.remove('hidden');
+    fetch('/api/preview/' + file.file_key)
+      .then(function (res) { return res.text(); })
+      .then(function (text) {
+        $('lb-loading').classList.add('hidden');
+        $('lb-text').textContent = text;
+        $('lb-text').classList.remove('hidden');
+      })
+      .catch(function () {
+        $('lb-loading').classList.add('hidden');
+        $('lb-nopreview').classList.remove('hidden');
+      });
+  } else {
+    $('lb-loading').classList.add('hidden');
+    $('lb-nopreview').classList.remove('hidden');
+  }
+}
+
+function closeLightbox() {
+  var lb = $('lightbox');
+  lb.classList.remove('active');
+  setTimeout(function () {
+    lb.classList.add('hidden');
+    var vid = $('lb-video');
+    var aud = $('lb-audio');
+    if (vid) { vid.pause(); vid.removeAttribute('src'); vid.load(); }
+    if (aud) { aud.pause(); aud.removeAttribute('src'); aud.load(); }
+  }, 250);
+}
+
+function lightboxNext() {
+  if (state.lightboxList.length === 0) return;
+  state.lightboxIndex = (state.lightboxIndex + 1) % state.lightboxList.length;
+  loadLightboxContent(state.lightboxList[state.lightboxIndex]);
+}
+
+function lightboxPrev() {
+  if (state.lightboxList.length === 0) return;
+  state.lightboxIndex = (state.lightboxIndex - 1 + state.lightboxList.length) % state.lightboxList.length;
+  loadLightboxContent(state.lightboxList[state.lightboxIndex]);
+}
+
+function lightboxDelete() {
+  if (state.lightboxList.length === 0) return;
+  var file = state.lightboxList[state.lightboxIndex];
+  showConfirm('Hapus "' + (file.filename || file.name || 'file') + '"?', function () {
+    api('/api/files/' + file.file_key, { method: 'DELETE' })
+      .then(function () {
+        showToast('Berkas dihapus');
+        closeLightbox();
+        loadFiles();
+      })
+      .catch(function () { showToast('Gagal menghapus berkas'); });
+  }, 'Hapus Berkas');
+}
+
+/* ─────────────────────────────────────────────────────────────
+   UPLOAD
+   ───────────────────────────────────────────────────────────── */
+function handleFiles(fileList) {
+  var files = Array.prototype.slice.call(fileList);
+  if (files.length === 0) return;
+
+  files.forEach(function (file) {
+    var upload = {
+      id: 'up-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
+      name: file.webkitRelativePath || file.name,
+      size: file.size,
+      progress: 0,
+      status: 'pending',
+      file: file,
+    };
+    state.uploads.push(upload);
+  });
+
+  showUploadPanel();
+  renderUploadItems();
+  processUploadQueue();
+}
+
+function showUploadPanel() {
+  $('upload-panel').classList.remove('hidden');
+}
+
+function hideUploadPanel() {
+  $('upload-panel').classList.add('hidden');
+}
+
+function renderUploadItems() {
+  var container = $('upload-items');
+  container.innerHTML = '';
+
+  var active = state.uploads.filter(function (u) { return u.status === 'pending' || u.status === 'uploading'; });
+  $('upload-panel-title').textContent = 'Unggah: ' + (active.length || state.uploads.length) + ' file';
+
+  if (state.uploads.length === 0) {
+    container.innerHTML = '<p class="text-center text-textGray text-xs py-4">Tidak ada unggahan aktif</p>';
+    return;
+  }
+
+  state.uploads.slice().reverse().forEach(function (up) {
+    var div = document.createElement('div');
+    div.className = 'up-item';
+    div.id = 'up-' + up.id;
+
+    var statusText = up.status === 'done' ? 'Selesai' : up.status === 'error' ? 'Gagal' : up.status === 'uploading' ? formatBytes(up.progress * up.size) + ' / ' + formatBytes(up.size) : 'Menunggu...';
+    var fillColor = up.status === 'error' ? 'rgb(var(--c-danger))' : up.status === 'done' ? 'rgb(var(--c-success))' : 'rgb(var(--c-primary))';
+
+    div.innerHTML =
+      '<div class="up-row">' +
+      '<span class="up-name">' + escapeHtml(up.name) + '</span>' +
+      '<span class="up-status">' + statusText + '</span>' +
+      '</div>' +
+      '<div class="up-bar"><div class="up-fill" style="width:' + (up.progress * 100) + '%;background-color:' + fillColor + '"></div></div>';
+
+    container.appendChild(div);
+  });
+}
+
+function updateUploadItem(up) {
+  var div = $('up-' + up.id);
+  if (!div) return;
+  var statusText = up.status === 'done' ? 'Selesai' : up.status === 'error' ? 'Gagal' : up.status === 'uploading' ? formatBytes(up.progress * up.size) + ' / ' + formatBytes(up.size) : 'Menunggu...';
+  var fillColor = up.status === 'error' ? 'rgb(var(--c-danger))' : up.status === 'done' ? 'rgb(var(--c-success))' : 'rgb(var(--c-primary))';
+
+  var statusEl = div.querySelector('.up-status');
+  var fillEl = div.querySelector('.up-fill');
+  if (statusEl) statusEl.textContent = statusText;
+  if (fillEl) {
+    fillEl.style.width = (up.progress * 100) + '%';
+    fillEl.style.backgroundColor = fillColor;
+  }
+}
+
+var uploadInProgress = false;
+function processUploadQueue() {
+  if (uploadInProgress) return;
+  var next = state.uploads.find(function (u) { return u.status === 'pending'; });
+  if (!next) {
+    uploadInProgress = false;
+    loadFiles();
+    return;
+  }
+
+  uploadInProgress = true;
+  next.status = 'uploading';
+  updateUploadItem(next);
+
+  var formData = new FormData();
+  formData.append('file', next.file, next.name);
+
+  var xhr = new XMLHttpRequest();
+  xhr.upload.addEventListener('progress', function (e) {
+    if (e.lengthComputable) {
+      next.progress = e.loaded / e.total;
+      updateUploadItem(next);
+    }
+  });
+
+  xhr.addEventListener('load', function () {
+    if (xhr.status >= 200 && xhr.status < 300) {
+      next.status = 'done';
+      next.progress = 1;
+    } else {
+      next.status = 'error';
+    }
+    updateUploadItem(next);
+    uploadInProgress = false;
+    setTimeout(processUploadQueue, 100);
+  });
+
+  xhr.addEventListener('error', function () {
+    next.status = 'error';
+    updateUploadItem(next);
+    uploadInProgress = false;
+    setTimeout(processUploadQueue, 100);
+  });
+
+  xhr.open('POST', '/api/upload');
+  xhr.send(formData);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   SYNC
+   ───────────────────────────────────────────────────────────── */
+function handleSync() {
+  var btn = $('btn-sync');
+  var icon = btn.querySelector('.sync-icon');
+  var text = btn.querySelector('.sync-text');
+  icon.classList.add('animate-spin');
+  text.textContent = 'Syncing...';
+
+  api('/api/sync', { method: 'POST' })
+    .then(function (data) {
+      showToast(data.message || 'Sync dimulai');
+      // Poll for sync completion
+      var pollCount = 0;
+      var pollInterval = setInterval(function () {
+        api('/api/sync-status')
+          .then(function (s) {
+            if (!s.syncing || pollCount > 60) {
+              clearInterval(pollInterval);
+              icon.classList.remove('animate-spin');
+              text.textContent = 'Sync';
+              loadFiles();
+              if (s.syncing) showToast('Sync masih berjalan...');
+            }
+          })
+          .catch(function () { clearInterval(pollInterval); });
+        pollCount++;
+      }, 2000);
+    })
+    .catch(function () {
+      showToast('Sync gagal');
+      icon.classList.remove('animate-spin');
+      text.textContent = 'Sync';
+    });
+}
+
+/* ─────────────────────────────────────────────────────────────
+   LOGS
+   ───────────────────────────────────────────────────────────── */
+function showLogsView() {
+  $('files-container').classList.add('hidden');
+  $('empty-state').classList.add('hidden');
+  $('logs-container').classList.remove('hidden');
+
+  var tbody = $('logs-tbody');
+  tbody.innerHTML = '';
+
+  if (state.logs.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" class="p-8 text-center text-textGray text-xs">Tidak ada log aktivitas</td></tr>';
+    return;
+  }
+
+  state.logs.forEach(function (log) {
+    var tr = document.createElement('tr');
+    tr.className = 'hover:bg-paper transition';
+    var statusBadge = log.status === 'error' ?
+      '<span class="text-red-600 font-semibold">ERROR</span>' :
+      log.status === 'success' ?
+      '<span class="text-emerald-600 font-semibold">SUCCESS</span>' :
+      '<span class="text-textGray font-semibold">INFO</span>';
+    tr.innerHTML =
+      '<td class="p-3 font-mono text-textGray whitespace-nowrap">' + formatDate(log.timestamp) + '</td>' +
+      '<td class="p-3 font-medium">' + escapeHtml(log.action || '-') + '</td>' +
+      '<td class="p-3 text-textGray">' + escapeHtml(log.details || log.detail || '-') + '</td>' +
+      '<td class="p-3">' + statusBadge + '</td>';
+    tbody.appendChild(tr);
+  });
+}
+
+function loadLogs() {
+  api('/api/logs')
+    .then(function (data) {
+      state.logs = Array.isArray(data) ? data : (data.logs || []);
+      if (state.activeCategory === 'logs') showLogsView();
+    })
+    .catch(function () {});
+}
+
+/* ─────────────────────────────────────────────────────────────
+   SETTINGS
+   ───────────────────────────────────────────────────────────── */
+function openSettings() {
+  $('settings-modal').classList.remove('hidden');
+  api('/api/settings')
+    .then(function (data) {
+      $('s-chatid').value = data.chatId || '';
+    })
+    .catch(function () {});
+}
+
+function closeSettings() {
+  $('settings-modal').classList.add('hidden');
+}
+
+function saveSettings(e) {
+  if (e) e.preventDefault();
+  var chatId = $('s-chatid').value.trim();
+  var btn = $('settings-save');
+  var spin = btn.querySelector('.spin');
+  var span = btn.querySelector('span');
+  var errEl = $('settings-error');
+  var successEl = $('settings-success');
+
+  errEl.classList.add('hidden');
+  successEl.classList.add('hidden');
+  span.textContent = 'Menyimpan...';
+  spin.classList.remove('hidden');
+
+  api('/api/settings', { method: 'POST', body: { chatId: chatId } })
+    .then(function () {
+      successEl.textContent = 'Pengaturan disimpan.';
+      successEl.classList.remove('hidden');
+    })
+    .catch(function (err) {
+      errEl.textContent = err.data && err.data.error ? err.data.error : 'Gagal menyimpan';
+      errEl.classList.remove('hidden');
+    })
+    .finally(function () {
+      span.textContent = 'Simpan';
+      spin.classList.add('hidden');
+    });
+}
+
+function lockDrive() {
+  closeSettings();
+  showLoginGate();
+  showToast('Drive dikunci');
+}
+
+function logoutSession() {
+  showConfirm('Keluar dari sesi Telegram? Anda perlu login OTP lagi untuk menggunakan drive.', function () {
+    api('/api/logout', { method: 'POST' })
+      .then(function () {
+        state.setupNeeded = true;
+        closeSettings();
+        showSetupWizard();
+      })
+      .catch(function () { showToast('Gagal keluar sesi'); });
+  }, 'Keluar Sesi');
+}
+
+function resetDrive() {
+  showConfirm('Reset drive? Semua berkas dan pengaturan akan dihapus permanen. Tindakan ini tidak dapat dibatalkan.', function () {
+    api('/api/reset', { method: 'POST' })
+      .then(function () {
+        showToast('Drive direset');
+        setTimeout(function () { location.reload(); }, 1000);
+      })
+      .catch(function () { showToast('Gagal mereset drive'); });
+  }, 'Reset Drive');
+}
+
+/* ─────────────────────────────────────────────────────────────
+   THEME
+   ───────────────────────────────────────────────────────────── */
+function toggleTheme() {
+  var html = document.documentElement;
+  if (html.classList.contains('dark')) {
+    html.classList.remove('dark');
+    state.theme = 'light';
+    localStorage.setItem('drive-theme', 'light');
+    $('ic-sun').classList.remove('hidden');
+    $('ic-moon').classList.add('hidden');
+  } else {
+    html.classList.add('dark');
+    state.theme = 'dark';
+    localStorage.setItem('drive-theme', 'dark');
+    $('ic-sun').classList.add('hidden');
+    $('ic-moon').classList.remove('hidden');
+  }
+}
+
+function applyThemeUI() {
+  if (state.theme === 'dark') {
+    $('ic-sun').classList.add('hidden');
+    $('ic-moon').classList.remove('hidden');
+  } else {
+    $('ic-sun').classList.remove('hidden');
+    $('ic-moon').classList.add('hidden');
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   LAYOUT
+   ───────────────────────────────────────────────────────────── */
+function toggleLayout() {
+  state.layout = state.layout === 'grid' ? 'list' : 'grid';
+  localStorage.setItem('drive-layout', state.layout);
+  updateLayoutUI();
+  renderFiles();
+}
+
+function updateLayoutUI() {
+  if (state.layout === 'grid') {
+    $('ic-grid').classList.add('hidden');
+    $('ic-list').classList.remove('hidden');
+  } else {
+    $('ic-grid').classList.remove('hidden');
+    $('ic-list').classList.add('hidden');
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   CUSTOM DROPDOWN
+   ───────────────────────────────────────────────────────────── */
+function initCustomDropdown(dropdownId, onChange) {
+  var dropdown = $(dropdownId);
+  if (!dropdown) return;
+
+  var trigger = dropdown.querySelector('.custom-dropdown-trigger');
+  var menu = dropdown.querySelector('.custom-dropdown-menu');
+  var label = dropdown.querySelector('.custom-dropdown-label');
+  var items = dropdown.querySelectorAll('.custom-dropdown-item');
+
+  function open() {
+    dropdown.classList.add('open');
+    trigger.setAttribute('aria-expanded', 'true');
+    // Highlight selected
+    var currentValue = dropdown.dataset.value;
+    items.forEach(function (item) {
+      item.classList.toggle('selected', item.dataset.value === currentValue);
+    });
+  }
+
+  function close() {
+    dropdown.classList.remove('open');
+    trigger.setAttribute('aria-expanded', 'false');
+  }
+
+  function toggle() {
+    if (dropdown.classList.contains('open')) close();
+    else open();
+  }
+
+  trigger.addEventListener('click', function (e) {
+    e.stopPropagation();
+    toggle();
+  });
+
+  items.forEach(function (item) {
+    item.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var value = item.dataset.value;
+      var text = item.textContent;
+      dropdown.dataset.value = value;
+      label.textContent = text;
+      close();
+      if (onChange) onChange(value);
+    });
+  });
+
+  // Close when clicking outside
+  document.addEventListener('click', function (e) {
+    if (!dropdown.contains(e.target)) close();
+  });
+
+  // Close on Escape
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && dropdown.classList.contains('open')) close();
+  });
+}
+
+/* ─────────────────────────────────────────────────────────────
+   DRAG & DROP
+   ───────────────────────────────────────────────────────────── */
+function setupDragDrop() {
+  var dropzone = $('dropzone');
+  var dashboard = document.querySelector('#app-dashboard');
+  if (!dashboard) return;
+
+  ['dragenter','dragover'].forEach(function (evt) {
+    dashboard.addEventListener(evt, function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      dropzone.classList.add('dragover');
+    });
+  });
+
+  ['dragleave','drop'].forEach(function (evt) {
+    dashboard.addEventListener(evt, function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      dropzone.classList.remove('dragover');
+    });
+  });
+
+  dashboard.addEventListener('drop', function (e) {
+    e.preventDefault();
+    var files = e.dataTransfer.files;
+    if (files && files.length > 0) handleFiles(files);
+  });
+}
+
+/* ─────────────────────────────────────────────────────────────
+   CONNECTION STATUS
+   ───────────────────────────────────────────────────────────── */
+function updateConnectionStatus(status) {
+  state.connectionState = status;
+  var dot = document.querySelector('#conn-dot .dot');
+  var text = document.querySelector('#conn-dot span:last-child');
+  if (!dot || !text) return;
+
+  var colors = {
+    connected: 'rgb(var(--c-success))',
+    connecting: 'rgb(var(--c-warning))',
+    disconnected: 'rgb(var(--c-danger))',
+  };
+  var labels = {
+    connected: 'TERHUBUNG',
+    connecting: 'MENGHUBUNGKAN...',
+    disconnected: 'TERPUTUS',
+  };
+
+  dot.style.backgroundColor = colors[status] || colors.disconnected;
+  text.textContent = labels[status] || labels.disconnected;
+}
+
+function checkConnection() {
+  api('/api/settings')
+    .then(function (data) {
+      if (data.connected) updateConnectionStatus('connected');
+      else updateConnectionStatus('disconnected');
+      if (data.sessionRevoked) {
+        $('session-banner').classList.remove('hidden');
+      } else {
+        $('session-banner').classList.add('hidden');
+      }
+    })
+    .catch(function () {
+      updateConnectionStatus('disconnected');
+    });
+}
+
+/* ─────────────────────────────────────────────────────────────
+   STORAGE INFO
+   ───────────────────────────────────────────────────────────── */
+function updateStorageInfo() {
+  var totalSize = state.files.reduce(function (sum, f) { return sum + (f.total_size || f.size || 0); }, 0);
+  var maxBytes = 15 * 1024 * 1024 * 1024;
+  var percent = Math.min((totalSize / maxBytes) * 100, 100);
+
+  var usedEl = $('storage-used');
+  var fillEl = $('storage-fill');
+  if (usedEl) usedEl.textContent = formatBytes(totalSize);
+  if (fillEl) fillEl.style.width = percent + '%';
+}
+
+/* ─────────────────────────────────────────────────────────────
+   NAVIGATION
+   ───────────────────────────────────────────────────────────── */
+function setCategory(category) {
+  state.activeCategory = category;
+  $$('.nav-btn').forEach(function (btn) {
+    btn.classList.toggle('active', btn.dataset.category === category);
+  });
+
+  if (category === 'logs') {
+    loadLogs();
+  } else {
+    applyFilters();
+  }
+
+  var titles = {
+    all: 'Drive Saya',
+    image: 'Gambar',
+    video: 'Video',
+    audio: 'Audio',
+    document: 'Dokumen',
+    folder: 'Folder',
+    logs: 'Log Sistem',
+  };
+  var titleEl = $('ws-title');
+  if (titleEl) titleEl.textContent = titles[category] || 'Drive Saya';
+}
+
+/* ─────────────────────────────────────────────────────────────
+   SEARCH
+   ───────────────────────────────────────────────────────────── */
+function handleSearch(e) {
+  state.searchQuery = e.target.value.trim();
+  var clearBtn = $('search-clear');
+  if (state.searchQuery) clearBtn.classList.remove('hidden');
+  else clearBtn.classList.add('hidden');
+  applyFilters();
+}
+
+function clearSearch() {
+  $('search-input').value = '';
+  state.searchQuery = '';
+  $('search-clear').classList.add('hidden');
+  applyFilters();
+}
+
+/* ─────────────────────────────────────────────────────────────
+   EVENT BINDING
+   ───────────────────────────────────────────────────────────── */
+function bindEvents() {
+  // Login
+  $('login-form').addEventListener('submit', handleLogin);
+
+  // Setup wizard
+  $('setup-form-step1').addEventListener('submit', handleSendCode);
+  $('setup-form-step2').addEventListener('submit', handleSignIn);
+  $('btn-back-step1').addEventListener('click', function () {
+    $('setup-form-step2').classList.add('hidden');
+    $('setup-form-step1').classList.remove('hidden');
+  });
+
+  // Navigation
+  $$('.nav-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      setCategory(btn.dataset.category);
+    });
+  });
+
+  // Search
+  $('search-input').addEventListener('input', handleSearch);
+  $('search-clear').addEventListener('click', clearSearch);
+
+  // Filters
+  initCustomDropdown('dd-sort', function (value) {
+    state.sortBy = value;
+    applyFilters();
+  });
+  initCustomDropdown('dd-size', function (value) {
+    state.sizeFilter = value;
+    applyFilters();
+  });
+  $('filter-extension').addEventListener('input', function (e) {
+    state.extensionFilter = e.target.value;
+    applyFilters();
+  });
+
+  // Upload
+  $('btn-upload-file').addEventListener('click', function () { $('file-input').click(); });
+  $('btn-upload-folder').addEventListener('click', function () { $('folder-input').click(); });
+  $('file-input').addEventListener('change', function (e) { handleFiles(e.target.files); e.target.value = ''; });
+  $('folder-input').addEventListener('change', function (e) { handleFiles(e.target.files); e.target.value = ''; });
+
+  // Upload panel
+  $('upload-panel-close').addEventListener('click', hideUploadPanel);
+  var panelCollapsed = false;
+  $('upload-panel-toggle').addEventListener('click', function () {
+    panelCollapsed = !panelCollapsed;
+    var items = $('upload-items');
+    var chevron = $('upload-chevron');
+    if (panelCollapsed) {
+      items.style.maxHeight = '0';
+      items.style.padding = '0';
+      chevron.style.transform = 'rotate(180deg)';
+    } else {
+      items.style.maxHeight = '';
+      items.style.padding = '';
+      chevron.style.transform = '';
+    }
+  });
+
+  // Sync
+  $('btn-sync').addEventListener('click', handleSync);
+
+  // Layout
+  $('btn-layout').addEventListener('click', toggleLayout);
+
+  // Theme
+  $('btn-theme').addEventListener('click', toggleTheme);
+
+  // Settings
+  $('btn-settings').addEventListener('click', openSettings);
+  $('settings-close').addEventListener('click', closeSettings);
+  $('settings-cancel').addEventListener('click', closeSettings);
+  $('settings-form').addEventListener('submit', saveSettings);
+  $('btn-lock').addEventListener('click', lockDrive);
+  $('btn-logout').addEventListener('click', logoutSession);
+  $('btn-reset-drive').addEventListener('click', resetDrive);
+
+  // Confirm modal
+  $('confirm-close').addEventListener('click', function () {
+    $('confirm-modal').classList.add('hidden');
+  });
+
+  // Context menu
+  document.addEventListener('click', hideContextMenu);
+  document.addEventListener('contextmenu', function (e) {
+    if (!e.target.closest('#files-container')) hideContextMenu();
+  });
+  $('ctx-download').addEventListener('click', function () {
+    if (state.contextFile) window.open('/api/download/' + state.contextFile.file_key, '_blank');
+    hideContextMenu();
+  });
+  $('ctx-preview').addEventListener('click', function () {
+    if (state.contextFile) openLightboxByFile(state.contextFile);
+    hideContextMenu();
+  });
+  $('ctx-delete').addEventListener('click', function () {
+    if (state.contextFile) {
+      var file = state.contextFile;
+      showConfirm('Hapus "' + (file.filename || file.name || 'file') + '"?', function () {
+        api('/api/files/' + file.file_key, { method: 'DELETE' })
+          .then(function () { showToast('Berkas dihapus'); loadFiles(); })
+          .catch(function () { showToast('Gagal menghapus'); });
+      }, 'Hapus Berkas');
+    }
+    hideContextMenu();
+  });
+
+  // Lightbox
+  $('lb-close').addEventListener('click', closeLightbox);
+  $('lb-prev').addEventListener('click', lightboxPrev);
+  $('lb-next').addEventListener('click', lightboxNext);
+  $('lb-delete').addEventListener('click', lightboxDelete);
+  $('lightbox').addEventListener('click', function (e) {
+    if (e.target === $('lightbox')) closeLightbox();
+  });
+
+  // Bulk bar
+  $('bulk-select-all').addEventListener('click', selectAll);
+  $('bulk-download').addEventListener('click', bulkDownload);
+  $('bulk-delete').addEventListener('click', bulkDelete);
+  $('bulk-cancel').addEventListener('click', function () {
+    state.isBulkMode = false;
+    state.selectedIds.clear();
+    updateBulkBar();
+    applyFilters();
+  });
+
+  // Keyboard shortcuts
+  document.addEventListener('keydown', function (e) {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+    if (e.key === 'Escape') {
+      if ($('lightbox').classList.contains('active')) closeLightbox();
+      else if (!$('settings-modal').classList.contains('hidden')) closeSettings();
+      else if (!$('confirm-modal').classList.contains('hidden')) $('confirm-modal').classList.add('hidden');
+      else if (state.isBulkMode) {
+        state.isBulkMode = false;
+        state.selectedIds.clear();
+        updateBulkBar();
+        applyFilters();
+      }
+      hideContextMenu();
+    }
+
+    if ($('lightbox').classList.contains('active')) {
+      if (e.key === 'ArrowLeft') lightboxPrev();
+      if (e.key === 'ArrowRight') lightboxNext();
+    }
+
+    if ((e.ctrlKey || e.metaKey) && e.key === 'a' && state.filteredFiles.length > 0) {
+      e.preventDefault();
+      if (!state.isBulkMode) state.isBulkMode = true;
+      selectAll();
+    }
+  });
+
+  // Drag & drop
+  setupDragDrop();
+}
+
+/* ─────────────────────────────────────────────────────────────
+   INIT
+   ───────────────────────────────────────────────────────────── */
+function init() {
+  applyThemeUI();
+  updateLayoutUI();
+  bindEvents();
+
+  // Check auth status
+  api('/api/auth/status')
+    .then(function (data) {
+      if (data.authenticated) {
+        state.loggedIn = true;
+        showDashboard();
+        loadFiles();
+        checkConnection();
+        setInterval(checkConnection, 30000);
+      } else {
+        // Check if setup is needed
+        api('/api/settings')
+          .then(function (s) {
+            if (!s.configured) {
+              state.setupNeeded = true;
+              showSetupWizard();
+            } else {
+              showLoginGate();
+            }
+          })
+          .catch(function () {
+            showLoginGate();
+          });
+      }
+    })
+    .catch(function () {
+      showLoginGate();
+    });
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
+
 })();
