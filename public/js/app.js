@@ -1440,8 +1440,8 @@ function init() {
         checkConnection();
         setInterval(checkConnection, 30000);
       } else {
-        // Check if setup is needed
-        api('/api/settings')
+        // Check if setup is needed (public endpoint — no auth required)
+        api('/api/settings/status')
           .then(function (s) {
             if (!s.configured) {
               state.setupNeeded = true;

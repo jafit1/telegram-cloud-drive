@@ -36,6 +36,20 @@ app.post('/api/auth/login', auth.loginHandler);
 app.post('/api/auth/logout', auth.logoutHandler);
 app.get('/api/auth/status', auth.statusHandler);
 
+// Settings status (read-only, used by the unauthenticated setup wizard to
+// decide whether to show login or the Telegram setup flow — must not sit
+// behind the auth gate, otherwise the wizard can never load.)
+app.get('/api/settings/status', (req, res) => {
+  res.json({
+    configured: !!(config.apiId && config.apiHash && config.sessionString),
+    apiIdSet: !!config.apiId,
+    apiHashSet: !!config.apiHash,
+    chatId: config.chatId || '',
+    connected: client ? client.connected : false,
+    sessionRevoked: telegramAuthState === 'revoked'
+  });
+});
+
 // ── Gate: every other /api/* route requires a valid session ──
 app.use('/api', auth.requireAuth);
 
