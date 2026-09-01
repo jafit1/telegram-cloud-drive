@@ -1,8 +1,10 @@
 const { DatabaseSync } = require('node:sqlite');
 const path = require('path');
 
-// Use persistent volume if available (Railway.app volume mount)
-const dataDir = process.env.DATA_DIR || __dirname;
+// Single source of truth for the data directory — also runs the one-time
+// migration of legacy root-level files. Required before DatabaseSync opens the
+// file below, which is the whole reason it is a separate module.
+const { dataDir } = require('./data-dir');
 const dbPath = path.join(dataDir, 'metadata.db');
 
 let db;

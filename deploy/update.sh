@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================================
-# Nexus Drive — Update Script
+# Drive Uyee Drive — Update Script
 # ----------------------------------------------------------------------------
 # Pulls latest code from GitHub, reinstall deps if needed, restarts service.
 # Run as:    sudo bash update.sh

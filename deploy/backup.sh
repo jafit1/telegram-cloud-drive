@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================================
-# Nexus Drive — Backup Script
+# Drive Uyee — Backup Script
 # ----------------------------------------------------------------------------
 # Creates timestamped tar.gz backup of all data (DB, session, uploads, cache).
 # Keeps last 7 backups, auto-prunes older ones.

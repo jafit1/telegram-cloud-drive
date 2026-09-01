@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================================
-# Nexus Drive — Oracle Cloud Free Tier Setup Script
+# Drive Uyee — Oracle Cloud Free Tier Setup Script
 # ----------------------------------------------------------------------------
 # Tested on: Oracle Linux 8 / Ubuntu 22.04 (ARM Ampere A1)
 # Run as:    sudo bash setup.sh
@@ -108,7 +108,7 @@ if [ ! -f "$APP_DIR/.env" ]; then
   info "Generating secure .env file..."
   SECRET=$(openssl rand -hex 32)
   cat > $APP_DIR/.env <<EOF
-# Nexus Drive Production Config
+# Drive Uyee Production Config
 PORT=$APP_PORT
 NODE_ENV=production
 DATA_DIR=$APP_DIR/data
@@ -135,7 +135,7 @@ fi
 info "Creating systemd service..."
 cat > /etc/systemd/system/nexusdrive.service <<EOF
 [Unit]
-Description=Nexus Drive - Telegram Cloud Storage
+Description=Drive Uyee - Telegram Cloud Storage
 After=network.target
 
 [Service]
@@ -236,7 +236,7 @@ warn "     Destination Port: 80, 443, 22"
 warn "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 # ── 13. Start service ────────────────────────────────────────────────────
-info "Starting Nexus Drive service..."
+info "Starting Drive Uyee service..."
 systemctl start nexusdrive.service
 sleep 2
 systemctl status nexusdrive.service --no-pager || true

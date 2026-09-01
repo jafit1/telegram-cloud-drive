@@ -1,4 +1,4 @@
-# 🌐 Nexus Drive — Cloudflare Tunnel (5 Menit Setup, Tanpa Daftar)
+# 🌐 Drive Uyee — Cloudflare Tunnel (5 Menit Setup, Tanpa Daftar)
 
 Cara **paling mudah** untuk expose app Anda ke internet publik. **Tanpa daftar akun, tanpa kartu kredit, tanpa domain.**
 
@@ -143,7 +143,7 @@ sudo nano /etc/systemd/system/nexus-tunnel.service
 Isi:
 ```ini
 [Unit]
-Description=Nexus Drive Cloudflare Tunnel
+Description=Drive Uyee Cloudflare Tunnel
 After=network.target nexusdrive.service
 
 [Service]

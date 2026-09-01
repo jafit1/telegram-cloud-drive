@@ -1,0 +1,82 @@
+/* ============================================================================
+   TOKENS — the single source of truth for colour, radius and elevation.
+   ----------------------------------------------------------------------------
+   Every value is stored as a bare "R G B" triplet so it can be consumed both as
+   rgb(var(--c-x)) in hand-written rules and as rgb(var(--c-x) / <alpha-value>)
+   by the Tailwind theme in tailwind.config.js. Changing a colour here changes
+   it in both worlds at once — that is the whole point of this file.
+
+   Dark mode is class-based (`darkMode: 'class'`), driven by the pre-paint
+   script in public/index.html which stamps `.dark` on <html>.
+   ========================================================================== */
+
+:root {
+  --c-bg: 250 250 250;            /* neutral-50  — page ground */
+  --c-surface: 255 255 255;       /* white       — cards, panels, menus */
+  --c-subtle: 245 245 245;        /* neutral-100 — inputs, wells, hover */
+  --c-border: 229 231 235;        /* neutral-200 */
+  --c-border-strong: 209 213 219; /* neutral-300 — bottom edge of raised parts */
+  --c-text: 23 23 23;             /* neutral-900 */
+  --c-text-muted: 115 115 115;    /* neutral-500 */
+  --c-iron: 64 64 64;             /* neutral-700 */
+  --c-fog: 163 163 163;           /* neutral-400 */
+  --c-ash: 191 191 191;           /* neutral-300 — disabled fills */
+
+  /* Semantic status — deliberately independent of the accent so "danger" never
+     inherits a brand-colour change. */
+  --c-success: 34 197 94;
+  --c-danger: 239 68 68;
+  --c-warning: 245 158 11;
+
+  /* Accent — the single brand colour. Primary actions, active states, focus
+     rings and progress. Everything else stays neutral so the accent always
+     reads as "this is the thing to click". */
+  --c-accent: 37 99 235;          /* blue-600 */
+  --c-accent-hover: 29 78 216;    /* blue-700 */
+  --c-accent-soft: 219 234 254;   /* blue-100 */
+  --c-on-accent: 255 255 255;
+
+  --radius: 16px;
+  --radius-sm: 12px;
+  --radius-xs: 8px;
+
+  --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.04);
+  --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.06), 0 1px 2px -1px rgb(0 0 0 / 0.04);
+  --shadow-md: 0 4px 12px -2px rgb(0 0 0 / 0.08), 0 2px 6px -2px rgb(0 0 0 / 0.04);
+  --shadow-lg: 0 16px 32px -8px rgb(0 0 0 / 0.12), 0 6px 12px -4px rgb(0 0 0 / 0.06);
+  --shadow-xl: 0 28px 56px -12px rgb(0 0 0 / 0.16);
+
+  color-scheme: light;
+}
+
+.dark {
+  --c-bg: 10 10 12;               /* near-black */
+  --c-surface: 24 24 27;          /* zinc-900 */
+  --c-subtle: 38 38 42;           /* zinc-800 */
+  --c-border: 52 52 56;           /* zinc-700/50 */
+  --c-border-strong: 72 72 80;    /* zinc-600 */
+  --c-text: 244 244 245;          /* zinc-100 */
+  --c-text-muted: 161 161 170;    /* zinc-400 */
+  --c-iron: 212 212 216;          /* zinc-300 */
+  --c-fog: 113 113 122;           /* zinc-500 */
+  --c-ash: 82 82 91;              /* zinc-600 */
+
+  --c-success: 74 222 128;
+  --c-danger: 248 113 113;
+  --c-warning: 251 191 36;
+
+  /* Brighter accent so it survives the dark surface, but still dark enough that
+     pure-white label text keeps AA contrast. */
+  --c-accent: 59 130 246;         /* blue-500 */
+  --c-accent-hover: 96 165 250;   /* blue-400 */
+  --c-accent-soft: 30 58 138;     /* blue-900 */
+  --c-on-accent: 255 255 255;
+
+  --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.2);
+  --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.3), 0 1px 2px -1px rgb(0 0 0 / 0.2);
+  --shadow-md: 0 4px 12px -2px rgb(0 0 0 / 0.3), 0 2px 6px -2px rgb(0 0 0 / 0.2);
+  --shadow-lg: 0 16px 32px -8px rgb(0 0 0 / 0.35), 0 6px 12px -4px rgb(0 0 0 / 0.2);
+  --shadow-xl: 0 28px 56px -12px rgb(0 0 0 / 0.4);
+
+  color-scheme: dark;
+}

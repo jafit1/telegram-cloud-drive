@@ -1,12 +1,14 @@
 {
   "name": "telegram-cloud-drive",
   "version": "1.0.0",
-  "description": "Unlimited Cloud Drive using private Telegram group as backend storage",
+  "description": "Cloud drive backed by a private Telegram group, using an MTProto user session so uploads are not capped at the Bot API's 50 MB",
   "main": "server.js",
   "scripts": {
-    "start": "node --localstorage-file=gramjs-localstorage.json server.js",
+    "start": "node --localstorage-file=data/gramjs-localstorage.json server.js",
     "build": "echo 'Sharp native module will be installed by Nixpacks automatically'",
-    "build:css": "npx --yes tailwindcss@3 -i ./src/input.css -o ./src/tailwind-generated.css --minify"
+    "build:css": "npx --yes tailwindcss@3.4.17 -i ./src/input.css -o ./public/css/nexus.css --minify",
+    "watch:css": "npx --yes tailwindcss@3.4.17 -i ./src/input.css -o ./public/css/nexus.css --watch",
+    "test": "node --test \"test/*.test.js\""
   },
   "dependencies": {
     "dotenv": "^16.4.5",
@@ -15,10 +17,12 @@
     "sharp": "^0.33.5",
     "telegram": "^2.26.15"
   },
+  "devDependencies": {
+    "tailwindcss": "^3.4.17"
+  },
   "engines": {
     "node": ">=22.5.0"
   },
   "author": "Antigravity",
   "license": "MIT"
 }
-

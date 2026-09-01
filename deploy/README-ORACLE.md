@@ -1,4 +1,4 @@
-# 🚀 Deploy Nexus Drive ke Oracle Cloud (GRATIS SELAMANYA)
+# 🚀 Deploy Drive Uyee ke Oracle Cloud (GRATIS SELAMANYA)
 
 Panduan lengkap deploy Telegram Cloud Drive ke Oracle Cloud Free Tier — **gratis selamanya, 24/7, tanpa batas waktu**.
 

@@ -1,0 +1,7 @@
+# Keeps data/ present in a fresh clone.
+#
+# The start command passes --localstorage-file=data/..., and node opens that path
+# before any application code runs — so the directory has to exist already or the
+# process dies at startup. On a host with a mounted volume the mount point covers
+# this; on a plain clone (and on the first boot before a volume is attached) this
+# file is what makes the path valid.

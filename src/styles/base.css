@@ -1,0 +1,136 @@
+/* ============================================================================
+   BASE — element-level defaults layered on top of Tailwind Preflight.
+   ----------------------------------------------------------------------------
+   Preflight already handles box-sizing, the margin reset, the border reset and
+   `img { max-width: 100% }`. What remains here is app-specific: the painted
+   ground, the typographic stack, scrollbars, the ambient wash, and keyframes.
+   ========================================================================== */
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  min-height: 100vh;
+  background: rgb(var(--c-bg));
+  color: rgb(var(--c-text));
+  font-family: "Inter", "DM Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  transition: background-color .25s, color .25s;
+}
+
+/* Preflight normalises fonts on form controls but leaves padding and background
+   to the UA — pin them so the .btn-* and .input rules start from a known
+   state instead of a per-browser one. */
+button, input, select, textarea {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  margin: 0;
+  padding: 0;
+}
+button { cursor: pointer; }
+button:disabled { cursor: default; }
+
+/* File pickers are always driven through a styled label or button. */
+input[type="file"] { display: none; }
+
+select { appearance: none; -webkit-appearance: none; }
+
+a { color: inherit; text-decoration: none; }
+
+::selection { background: rgb(var(--c-text) / 0.2); }
+
+/* ─────────────────────────────────────────────────────────────
+   SCROLLBAR
+   ───────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgb(var(--c-text-muted) / 0.25); border-radius: 9999px; }
+::-webkit-scrollbar-thumb:hover { background: rgb(var(--c-text-muted) / 0.45); }
+
+.custom-scrollbar::-webkit-scrollbar { width: 5px; height: 5px; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background: rgb(var(--c-text-muted) / 0.2); border-radius: 9999px; }
+
+/* ─────────────────────────────────────────────────────────────
+   THEME CROSSFADE
+   ----------------------------------------------------------------
+   Only <body> used to carry a transition, so switching themes faded the page
+   background over a quarter second while every card, border, icon and label
+   above it changed instantly. That mismatch is what made the switch feel like a
+   flicker rather than a dissolve — the eye tracks the elements, not the backdrop.
+
+   The class below is put on <html> by toggleTheme for the length of the switch
+   and then taken off again, so the blanket transition never lingers to interfere
+   with hover states, the drawer slide, or the preview viewer's own animations.
+   Only colour-ish properties are listed: transform and opacity are deliberately
+   absent, so nothing moves or fades in or out while the palette changes.
+
+   The !important is needed to beat the per-component transitions already
+   declared on .card, .btn-primary, .input and the rest — those shorthands would
+   otherwise win on their own elements and snap.
+   ───────────────────────────────────────────────────────────── */
+html.theme-anim,
+html.theme-anim *,
+html.theme-anim *::before,
+html.theme-anim *::after {
+  transition-property:
+    background-color, background-image, border-color, color,
+    fill, stroke, box-shadow, outline-color, text-decoration-color !important;
+  transition-duration: .42s !important;
+  /* Ease-out: the palette commits early and settles, which reads as calm.
+     A symmetric ease makes a full-page colour change feel sluggish. */
+  transition-timing-function: cubic-bezier(0.33, 0.9, 0.28, 1) !important;
+  transition-delay: 0s !important;
+}
+
+/* The icon swap in the theme button is a display toggle, which cannot be
+   transitioned — so the button itself turns once instead. */
+#btn-theme.theme-spin svg { animation: themeSpin .42s cubic-bezier(0.33, 0.9, 0.28, 1); }
+@keyframes themeSpin {
+  from { transform: rotate(-140deg) scale(.72); opacity: .35; }
+  to   { transform: rotate(0deg) scale(1); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html.theme-anim,
+  html.theme-anim *,
+  html.theme-anim *::before,
+  html.theme-anim *::after { transition-duration: 0s !important; }
+  #btn-theme.theme-spin svg { animation: none; }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   AMBIENT BACKGROUND — a very soft accent wash so the dashboard doesn't read
+   as a flat grey sheet. It sits behind everything, and every direct child of
+   <body> is lifted to z-index 1 so nothing is swallowed by it.
+   ───────────────────────────────────────────────────────────── */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(60rem 30rem at 12% -10%, rgb(var(--c-accent) / 0.07), transparent 60%),
+    radial-gradient(45rem 25rem at 100% 0%, rgb(var(--c-accent) / 0.05), transparent 65%);
+}
+body > * { position: relative; z-index: 1; }
+
+/* ─────────────────────────────────────────────────────────────
+   KEYFRAMES
+   ----------------------------------------------------------------
+   Tailwind only emits the `spin` / `pulse` / `ping` keyframes when it actually
+   sees the matching `animate-*` utility. The markup also uses the arbitrary
+   form `animate-[spin_8s_linear_infinite]`, which references `spin` by name
+   without triggering that emission — so the definitions are declared here and
+   never depend on the scanner. `riseIn` is entirely ours.
+   ───────────────────────────────────────────────────────────── */
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+@keyframes ping { 75%, 100% { transform: scale(2); opacity: 0; } }
+@keyframes riseIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}

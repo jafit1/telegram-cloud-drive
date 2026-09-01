@@ -1,0 +1,55 @@
+/* ============================================================================
+   OVERRIDES — the only block allowed to sit AFTER the utilities layer.
+   ----------------------------------------------------------------------------
+   Anything here wins over a Tailwind utility, so the bar for adding a rule is
+   high: it must be a deliberate token remap or a state that has to beat an
+   inline utility. Everything else belongs in components.css or app-shell.css.
+
+   NOTE ON `.hidden`
+   The previous hand-written stylesheet declared `.hidden { display: none
+   !important; }`, which silently defeated every responsive display utility:
+   `hidden md:flex` (index.html) and `toolbar-divider hidden sm:block`
+   (index.html, twice) were invisible at ALL breakpoints. No override is needed
+   — Tailwind emits `hidden` last within the display group, so it already beats
+   a plain `flex`/`grid`/`inline-block` on the same element, while a responsive
+   `md:flex` correctly beats it. Do not reintroduce the `!important`.
+   ========================================================================== */
+
+/* ─────────────────────────────────────────────────────────────
+   DRAGOVER — has to beat the `border-*` utilities already on the drop zone.
+   ───────────────────────────────────────────────────────────── */
+.dragover {
+  border-color: rgb(var(--c-accent)) !important;
+  border-width: 2px !important;
+  border-style: dashed !important;
+  background-color: rgb(var(--c-accent) / 0.06) !important;
+  box-shadow: 0 0 0 4px rgb(var(--c-accent) / 0.12), inset 0 0 20px rgb(var(--c-accent) / 0.05) !important;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   TOKEN REMAPS — markup that still uses literal palette utilities.
+   ----------------------------------------------------------------
+   These exist so hardcoded colours pick up the dark theme. Each one is a
+   Tahap 3 cleanup: replace the utility in the markup with a `.note-*`
+   component (see components.css) and delete the rule from here.
+   ───────────────────────────────────────────────────────────── */
+.dark .bg-red-50 { background-color: rgb(var(--c-danger) / 0.1); }
+.dark .bg-red-100 { background-color: rgb(var(--c-danger) / 0.15); }
+.dark .bg-emerald-50 { background-color: rgb(var(--c-success) / 0.1); }
+.dark .text-red-700 { color: rgb(var(--c-danger)); }
+.dark .text-emerald-700 { color: rgb(var(--c-success)); }
+.dark .border-red-200 { border-color: rgb(var(--c-danger) / 0.25); }
+.dark .border-emerald-200 { border-color: rgb(var(--c-success) / 0.25); }
+
+/* `divide-neutral-100` resolves to the real neutral-100, which does not follow
+   the theme. Remap it to the border token in both themes. */
+.divide-neutral-100 > * + * { border-top-color: rgb(var(--c-border)); }
+
+/* ─────────────────────────────────────────────────────────────
+   REDUCED MOTION — strip the transforms that read as movement, keep the
+   colour and opacity transitions that carry state.
+   ───────────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .rise-in { animation: none; }
+  .btn-primary:hover, .stat-tile:hover, #files-container .card:hover { transform: none; }
+}

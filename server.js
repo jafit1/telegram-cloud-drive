@@ -1,3 +1,9 @@
+// Load .env before anything else: ./data-dir reads DATA_DIR and ./auth reads
+// DRIVE_PASSWORD / DRIVE_SECRET at require time, so a later call would be too
+// late to matter. dotenv was already a declared dependency but never loaded,
+// which is why a .env file used to be silently ignored.
+require('dotenv').config();
+
 const express = require('express');
 const multer = require('multer');
 const fs = require('fs');
@@ -6,8 +12,15 @@ const { pipeline } = require('stream/promises');
 const { TelegramClient, Api } = require('telegram');
 const { StringSession } = require('telegram/sessions');
 const { computeCheck } = require('telegram/Password');
+// Must be required before ./database — that module opens SQLite at require
+// time, so the legacy-file migration has to have already finished.
+const { dataDir } = require('./data-dir');
 const db = require('./database');
 const auth = require('./auth');
+// Normalisation of the two media shapes a channel history returns. Kept in its
+// own module so it can be unit-tested without standing up a server or a
+// Telegram client — see the header there for why photos used to be skipped.
+const { describeSyncMedia, floodWaitSeconds } = require('./sync-media');
 
 // Try to load Sharp for image compression
 let sharp = null;
@@ -21,8 +34,9 @@ try {
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Use persistent volume if available (Railway.app volume mount)
-const dataDir = process.env.DATA_DIR || __dirname;
+// dataDir is resolved once in ./data-dir (imported above) and defaults to
+// ./data, matching the setup docs and the wizard. Set DATA_DIR to point it at a
+// mounted volume instead.
 
 // Middleware
 // Railway terminates TLS at its edge, so honour X-Forwarded-For for
@@ -379,6 +393,19 @@ function saveConfigToFile() {
   }
 }
 
+// What the setup wizard puts in the API Hash box. The hash is a credential —
+// whoever holds it plus the api id can impersonate this app — so the real
+// value never leaves the server. The last four characters are kept visible so
+// the operator can tell which of their apps is configured; that alone is not
+// enough to use. An empty stored hash masks to an empty string, which is what
+// makes the wizard fall back to asking for one.
+function maskApiHash(hash) {
+  const h = String(hash || '');
+  if (!h) return '';
+  if (h.length <= 4) return '•'.repeat(h.length);
+  return '•'.repeat(h.length - 4) + h.slice(-4);
+}
+
 // ============================================================
 // HELPERS
 // ============================================================
@@ -393,45 +420,126 @@ function getCategory(filename, mimeType) {
   return 'document';
 }
 
+// Picks which of Telegram's own pre-rendered variants to serve as the grid
+// thumbnail. Named "smallest" because that is what it used to return outright —
+// but type 's' is 100px on its long edge and the cards render at roughly twice
+// that, so every tile came back visibly soft. The rule now is the smallest
+// variant that still covers THUMB_TARGET_PX, falling back to the largest one
+// available when none does. Either way nothing but the variant itself is
+// downloaded; the original is never touched.
+const THUMB_TARGET_PX = 320;
+
+function pickThumbVariant(variants) {
+  const usable = variants.filter(v => v && !Array.isArray(v.bytes));
+  if (usable.length === 0) return null;
+
+  const longEdge = v => Math.max(v.w || 0, v.h || 0);
+  const weight = v => longEdge(v) || Number(v.size) || 0;
+  const sorted = [...usable].sort((a, b) => weight(a) - weight(b));
+
+  // A variant with no dimensions at all (a bare PhotoCachedSize) sorts by byte
+  // count, which is not comparable to pixels — so it only ever wins as the
+  // last resort below, never as a "covers the target" match.
+  return sorted.find(v => longEdge(v) >= THUMB_TARGET_PX) || sorted[sorted.length - 1];
+}
+
 function getSmallestThumb(media) {
   if (!media) return null;
+
+  // A photo (MessageMediaPhoto) carries its variants directly in `sizes`
+  // instead of a `thumbs` list on a document. Without this branch the thumbnail
+  // route fell straight through to the Sharp path for every synced photo —
+  // downloading the full-resolution image just to shrink it — even though
+  // Telegram already hosts a small variant.
+  if (!media.document && media.photo) {
+    return pickThumbVariant((media.photo.sizes || []).filter(s => s.type));
+  }
+
   const doc = media.document;
   if (!doc) return null;
   const thumbs = doc.thumbs || [];
-  if (thumbs.length === 0) {
-    if (doc.thumbnail) return doc.thumbnail;
-    if (doc.thumb) return doc.thumb;
-    return null;
-  }
-  const sorted = [...thumbs].sort((a, b) => {
-    const areaA = (a.w || 0) * (a.h || 0) || a.size || 0;
-    const areaB = (b.w || 0) * (b.h || 0) || b.size || 0;
-    return areaA - areaB;
-  });
-  return sorted[0];
+  if (thumbs.length === 0) return doc.thumbnail || doc.thumb || null;
+  return pickThumbVariant(thumbs);
 }
 
+/* The preview pane decides what to render from this, so the map has to cover
+   more than the nine types it started with — a .m4a came back as
+   application/octet-stream and no <audio> element would touch it.
+
+   Two deliberate mislabels, both to keep same-origin script execution out of
+   the drive: .html/.htm and .xhtml are declared text/plain so a stored page is
+   shown as source instead of being executed against this origin, and .svg is
+   only ever consumed inside an <img> (where scripts do not run) by the preview
+   code. Everything textual carries charset=utf-8 so accented filenames and
+   content do not arrive mojibaked. */
+const MIME_BY_EXT = {
+  // images
+  '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+  '.gif': 'image/gif', '.webp': 'image/webp', '.avif': 'image/avif',
+  '.bmp': 'image/bmp', '.ico': 'image/x-icon', '.svg': 'image/svg+xml',
+  '.tif': 'image/tiff', '.tiff': 'image/tiff',
+  '.heic': 'image/heic', '.heif': 'image/heif',
+  // video
+  '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.webm': 'video/webm',
+  '.mkv': 'video/x-matroska', '.avi': 'video/x-msvideo',
+  '.mov': 'video/quicktime', '.wmv': 'video/x-ms-wmv',
+  '.flv': 'video/x-flv', '.mpg': 'video/mpeg', '.mpeg': 'video/mpeg',
+  '.3gp': 'video/3gpp',
+  // audio
+  '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg',
+  '.oga': 'audio/ogg', '.opus': 'audio/opus', '.m4a': 'audio/mp4',
+  '.aac': 'audio/aac', '.flac': 'audio/flac', '.wma': 'audio/x-ms-wma',
+  '.mid': 'audio/midi', '.midi': 'audio/midi',
+  // documents
+  '.pdf': 'application/pdf',
+  '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xls': 'application/vnd.ms-excel',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.ppt': 'application/vnd.ms-powerpoint',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  '.odt': 'application/vnd.oasis.opendocument.text',
+  '.ods': 'application/vnd.oasis.opendocument.spreadsheet',
+  '.epub': 'application/epub+zip', '.rtf': 'application/rtf',
+  // text and source, all inline-safe
+  '.txt': 'text/plain; charset=utf-8', '.log': 'text/plain; charset=utf-8',
+  '.md': 'text/plain; charset=utf-8', '.markdown': 'text/plain; charset=utf-8',
+  '.csv': 'text/plain; charset=utf-8', '.tsv': 'text/plain; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.xml': 'text/plain; charset=utf-8', '.yml': 'text/plain; charset=utf-8',
+  '.yaml': 'text/plain; charset=utf-8', '.toml': 'text/plain; charset=utf-8',
+  '.ini': 'text/plain; charset=utf-8', '.cfg': 'text/plain; charset=utf-8',
+  '.conf': 'text/plain; charset=utf-8', '.env': 'text/plain; charset=utf-8',
+  '.srt': 'text/plain; charset=utf-8', '.vtt': 'text/plain; charset=utf-8',
+  '.html': 'text/plain; charset=utf-8', '.htm': 'text/plain; charset=utf-8',
+  '.xhtml': 'text/plain; charset=utf-8',
+  '.css': 'text/plain; charset=utf-8', '.js': 'text/plain; charset=utf-8',
+  '.mjs': 'text/plain; charset=utf-8', '.cjs': 'text/plain; charset=utf-8',
+  '.jsx': 'text/plain; charset=utf-8', '.tsx': 'text/plain; charset=utf-8',
+  '.py': 'text/plain; charset=utf-8', '.rb': 'text/plain; charset=utf-8',
+  '.php': 'text/plain; charset=utf-8', '.java': 'text/plain; charset=utf-8',
+  '.c': 'text/plain; charset=utf-8', '.h': 'text/plain; charset=utf-8',
+  '.cpp': 'text/plain; charset=utf-8', '.hpp': 'text/plain; charset=utf-8',
+  '.cs': 'text/plain; charset=utf-8', '.go': 'text/plain; charset=utf-8',
+  '.rs': 'text/plain; charset=utf-8', '.kt': 'text/plain; charset=utf-8',
+  '.ts': 'text/plain; charset=utf-8',
+  '.swift': 'text/plain; charset=utf-8', '.sh': 'text/plain; charset=utf-8',
+  '.bat': 'text/plain; charset=utf-8', '.ps1': 'text/plain; charset=utf-8',
+  '.sql': 'text/plain; charset=utf-8', '.dockerfile': 'text/plain; charset=utf-8',
+  // archives
+  '.zip': 'application/zip', '.rar': 'application/vnd.rar',
+  '.7z': 'application/x-7z-compressed', '.tar': 'application/x-tar',
+  '.gz': 'application/gzip', '.bz2': 'application/x-bzip2',
+  '.xz': 'application/x-xz', '.iso': 'application/x-iso9660-image',
+  '.apk': 'application/vnd.android.package-archive',
+  '.exe': 'application/octet-stream', '.msi': 'application/octet-stream',
+};
+
 function getMimeTypeByFilename(filename) {
-  const ext = path.extname(filename).toLowerCase();
-  const mimeMap = {
-    '.mp4': 'video/mp4',
-    '.mkv': 'video/x-matroska',
-    '.avi': 'video/x-msvideo',
-    '.mov': 'video/quicktime',
-    '.wmv': 'video/x-ms-wmv',
-    '.mp3': 'audio/mpeg',
-    '.wav': 'audio/wav',
-    '.ogg': 'audio/ogg',
-    '.pdf': 'application/pdf',
-    '.txt': 'text/plain',
-    '.zip': 'application/zip',
-    '.rar': 'application/x-rar-compressed',
-    '.jpg': 'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.png': 'image/png',
-    '.webp': 'image/webp'
-  };
-  return mimeMap[ext] || 'application/octet-stream';
+  // A split part (.part001) keeps the real extension one segment back.
+  const cleaned = String(filename || '').replace(/\.part\d+$/i, '');
+  const ext = path.extname(cleaned).toLowerCase();
+  return MIME_BY_EXT[ext] || 'application/octet-stream';
 }
 
 function groupSplitFiles(files) {  const groups = new Map(); // baseName -> Array of files
@@ -619,7 +727,13 @@ async function downloadTelegramThumb(message) {
   if (!thumbObj) return null;
   try {
     await ensureConnection();
-    const buf = await client.downloadMedia(message.media, { thumbSize: thumbObj });
+    // `thumb`, not `thumbSize` — GramJS ignores an unknown key, so the option
+    // name being wrong meant this downloaded the ENTIRE original every time and
+    // then threw it away for exceeding the size guard below. That is what made
+    // the grid slow and what made every PDF thumbnail 404: the fallback path
+    // downloaded the original a second time for images, and gave up for
+    // anything else. See node_modules/telegram/client/downloads.d.ts:136.
+    const buf = await client.downloadMedia(message.media, { thumb: thumbObj });
     if (buf && buf.length > 0 && buf.length < 500 * 1024) {
       return buf;
     }
@@ -699,6 +813,10 @@ app.get('/api/settings', (req, res) => {
   res.json({
     configured: !!(config.apiId && config.apiHash && config.sessionString),
     apiId: config.apiId || '',
+    // Bullets plus the last four characters — enough for the wizard to show the
+    // field as already filled, never enough to reuse the credential.
+    apiHashMasked: maskApiHash(config.apiHash),
+    apiHashSet: !!config.apiHash,
     chatId: config.chatId || '',
     connected: client ? client.connected : false,
     // Surfaced so the dashboard can warn on load rather than waiting for an
@@ -726,11 +844,19 @@ app.post('/api/auth/send-code', async (req, res) => {
   let { apiId, apiHash, phone } = req.body;
   if (!phone) return res.status(400).json({ error: 'Nomor Telepon diperlukan.' });
 
-  // Fall back to server-side env credentials, never to shared public ones.
-  // The old default (apiId 6 + the official Android hash) is flagged by
-  // Telegram's anti-abuse system and risks getting the account limited.
-  if (!apiId) apiId = process.env.API_ID || '';
-  if (!apiHash) apiHash = process.env.API_HASH || '';
+  // Fall back to the server-side credentials (config.json / env), never to
+  // shared public ones. The old default (apiId 6 + the official Android hash)
+  // is flagged by Telegram's anti-abuse system and risks limiting the account.
+  // This is what makes the two fields optional in the login form: if the
+  // operator already provisioned credentials, the client sends nothing.
+  // The wizard pre-fills the API Hash box with bullets (see maskApiHash). Those
+  // bullets are not a hash, so treat anything non-hexadecimal as "not supplied"
+  // and fall through to the stored value — otherwise submitting the untouched
+  // form would fail validation on a login that needed no credentials at all.
+  if (typeof apiHash === 'string' && /[^a-f0-9]/i.test(apiHash.trim())) apiHash = '';
+
+  if (!apiId) apiId = config.apiId || process.env.API_ID || '';
+  if (!apiHash) apiHash = config.apiHash || process.env.API_HASH || '';
 
   if (!apiId || !apiHash) {
     return res.status(400).json({
@@ -867,7 +993,13 @@ app.post('/api/auth/sign-in', async (req, res) => {
   }
 });
 
-// 3c. Logout
+// 3c. Logout — ends the Telegram session, keeps the app registration.
+//
+// This used to blank all four fields and delete config.json outright, which is
+// why the API ID and Hash had to be retyped from my.telegram.org after every
+// logout. They identify the *application*, not the session: the OTP login that
+// follows needs them, so throwing them away made the next login harder for no
+// gain. Only an explicit reset (below) clears them now.
 app.post('/api/logout', async (req, res) => {
   db.logActivity('Auth', 'Pengguna keluar dari sesi cloud drive.');
   if (keepAliveInterval) clearInterval(keepAliveInterval);
@@ -876,12 +1008,42 @@ app.post('/api/logout', async (req, res) => {
     try { await client.disconnect(); } catch {}
     client = null;
   }
-  config = { apiId: '', apiHash: '', sessionString: '', chatId: '' };
-  try {
-    const configPath = path.join(dataDir, 'config.json');
-    if (fs.existsSync(configPath)) fs.unlinkSync(configPath);
-  } catch {}
+  config = {
+    apiId: config.apiId,
+    apiHash: config.apiHash,
+    sessionString: '',
+    chatId: config.chatId
+  };
+  telegramAuthState = 'none';
+  saveConfigToFile();
   res.json({ success: true });
+});
+
+// 3d. Reset the API credentials — the one action that changes them.
+//
+// Separate from Reset Drive (which clears files) and from logout (which clears
+// only the session) so that "my credentials are wrong" and "I want to start
+// over" are not the same button. The session cannot outlive the credentials it
+// was issued under, so it goes too; the storage chat id is not a credential and
+// stays. If API_ID/API_HASH are set as environment variables they win again on
+// the next restart — that is the deployment case, and it is deliberate.
+app.post('/api/settings/reset-credentials', async (req, res) => {
+  try {
+    if (keepAliveInterval) clearInterval(keepAliveInterval);
+    if (sessionSaveInterval) clearInterval(sessionSaveInterval);
+    if (client) {
+      try { await client.disconnect(); } catch {}
+      client = null;
+    }
+    config = { apiId: '', apiHash: '', sessionString: '', chatId: config.chatId || '' };
+    telegramAuthState = 'none';
+    saveConfigToFile();
+    db.logActivity('Config', 'Kredensial API Telegram direset. Perlu diisi ulang saat login berikutnya.');
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Credential reset failed:', err);
+    res.status(500).json({ error: 'Gagal mereset kredensial: ' + err.message });
+  }
 });
 
 // 4. File list
@@ -963,8 +1125,10 @@ app.post('/api/upload', checkConfig, upload.single('file'), async (req, res) => 
     try {
       const thumbBuffer = await downloadTelegramThumb(message);
       if (thumbBuffer) {
-        const ext = path.extname(originalName) || '';
-        fs.writeFileSync(path.join(thumbDir, `${fileKey}${ext}`), thumbBuffer);
+        // Always .jpg: a native Telegram thumbnail is JPEG no matter what the
+        // file it belongs to is, and naming it after the original extension is
+        // what made /api/thumb serve a PDF's thumbnail as application/pdf.
+        fs.writeFileSync(path.join(thumbDir, `${fileKey}.jpg`), thumbBuffer);
         console.log(`Generated thumbnail for ${originalName} (${thumbBuffer.length} bytes)`);
         telegramThumbId = 'local_cached';
       }
@@ -1032,89 +1196,171 @@ app.get('/api/uploads', (req, res) => {
   res.json(uploads);
 });
 
-// 6. Thumbnail endpoint — with Sharp fallback for images
+/* ══════════════════════════════════════════════════════════════════════════
+   6. THUMBNAILS
+   --------------------------------------------------------------------------
+   The grid asks for one of these per visible card, so this route is what makes
+   the drive feel fast or slow. Four rules keep it cheap:
+
+   1. A cached thumbnail is served with a long immutable Cache-Control. A
+      file_key never points at different bytes, so the browser may keep it
+      indefinitely. The old route sent no cache headers at all, so every
+      re-render — switching to list view and back, changing a filter — re-fetched
+      every tile from the server.
+
+   2. Telegram's own thumbnail is the only source consulted by default. It is a
+      few KB and rides along with the message we already look up by id.
+
+   3. Downloading the *original* just to shrink it is the expensive path: for a
+      300 MB image that is 300 MB pulled over MTProto to produce one 400px
+      square. It now runs only for files at or under THUMB_AUTO_BYTES, or when
+      the caller asks for it explicitly with ?generate=1 (the preview pane does,
+      the grid never does). Everything else answers 404 and the client draws its
+      file-type icon instead.
+
+   4. Concurrency is capped. A 50-card grid used to fire 50 simultaneous
+      getMessages/downloadMedia calls — which is precisely how scrolling earned
+      a FLOOD_WAIT. THUMB_CONCURRENCY run at a time and the rest wait for a slot.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+const THUMB_AUTO_BYTES = 8 * 1024 * 1024;   // ceiling for shrinking an original
+const THUMB_CONCURRENCY = 4;                // parallel Telegram thumb fetches
+const THUMB_MISS_TTL_MS = 10 * 60 * 1000;   // how long "no thumbnail" is trusted
+const BROWSER_IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.avif', '.bmp']);
+
+// fileKey -> when we last failed to produce a thumbnail. Without this, a file
+// that genuinely has none is re-requested from Telegram on every single render.
+const thumbMisses = new Map();
+
+function thumbMissedRecently(fileKey) {
+  const at = thumbMisses.get(fileKey);
+  if (!at) return false;
+  if (Date.now() - at > THUMB_MISS_TTL_MS) { thumbMisses.delete(fileKey); return false; }
+  return true;
+}
+
+let thumbActive = 0;
+const thumbWaiting = [];
+
+// Minimal semaphore. Every acquire must be paired with a release in a finally,
+// or the queue stalls permanently.
+function acquireThumbSlot() {
+  if (thumbActive < THUMB_CONCURRENCY) {
+    thumbActive++;
+    return Promise.resolve();
+  }
+  return new Promise(resolve => thumbWaiting.push(resolve));
+}
+
+function releaseThumbSlot() {
+  const next = thumbWaiting.shift();
+  if (next) next();        // hand the slot straight over; the count is unchanged
+  else thumbActive--;
+}
+
+// A native Telegram thumbnail is always JPEG regardless of what the file it
+// belongs to is, so serving it under the original extension mislabelled it:
+// the thumbnail of a PDF went out as application/pdf and no <img> would render
+// it. Anything that is not a browser-renderable image extension is declared
+// image/jpeg.
+function thumbContentType(filePath) {
+  const e = path.extname(filePath).toLowerCase();
+  if (e === '.webp') return 'image/webp';
+  if (BROWSER_IMAGE_EXTS.has(e)) return getMimeTypeByFilename(filePath);
+  return 'image/jpeg';
+}
+
+function sendCachedThumb(res, filePath) {
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  res.setHeader('Content-Type', thumbContentType(filePath));
+  return res.sendFile(filePath);
+}
+
+// A short positive cache on the miss stops the icon fallback from re-asking on
+// every scroll, while still letting a later Sync or ?generate=1 fix things.
+function sendNoThumb(res) {
+  res.setHeader('Cache-Control', 'public, max-age=300');
+  return res.status(404).end();
+}
+
 app.get('/api/thumb/:fileKey', checkConfig, async (req, res) => {
   const { fileKey } = req.params;
+  const generate = req.query.generate === '1';
   try {
     const file = db.getFile(fileKey);
     if (!file) return res.status(404).end();
 
     const ext = path.extname(file.filename) || '';
-    
-    // Check for existing thumbnail (both original extension and .webp)
-    const thumbPath = path.join(thumbDir, `${fileKey}${ext}`);
-    const thumbWebpPath = path.join(thumbDir, `${fileKey}.webp`);
-    
-    if (fs.existsSync(thumbPath)) {
-      return res.sendFile(thumbPath);
-    }
-    if (fs.existsSync(thumbWebpPath)) {
-      res.setHeader('Content-Type', 'image/webp');
-      return res.sendFile(thumbWebpPath);
+    const candidates = [
+      path.join(thumbDir, `${fileKey}.webp`),   // written by the Sharp path
+      path.join(thumbDir, `${fileKey}.jpg`),    // written by the native path
+      path.join(thumbDir, `${fileKey}${ext}`),  // legacy: original extension
+    ];
+    for (const p of candidates) {
+      if (fs.existsSync(p)) return sendCachedThumb(res, p);
     }
 
-    if (!file.telegram_media_id) return res.status(404).end();
+    if (!file.telegram_media_id) return sendNoThumb(res);
+    if (!generate && thumbMissedRecently(fileKey)) return sendNoThumb(res);
 
-    // 1st attempt: Download Telegram native thumbnail
-    console.log(`Downloading thumbnail dynamically for: ${file.filename}`);
-    await ensureConnection();
-    const messages = await client.getMessages(config.chatId, { ids: [parseInt(file.telegram_media_id)] });
-
-    if (messages && messages.length > 0 && messages[0].media) {
-      const thumbBuffer = await downloadTelegramThumb(messages[0]);
-      if (thumbBuffer) {
-        fs.writeFileSync(thumbPath, thumbBuffer);
-        db.updateFileThumb(fileKey, 'local_cached');
-        return res.sendFile(thumbPath);
-      }
-    }
-
-    // 2nd attempt: Generate thumbnail from file using Sharp (for images by category or extension)
     const IMAGE_EXTS_SET = new Set(['.jpg','.jpeg','.png','.gif','.bmp','.webp','.heic','.heif','.tiff','.tif','.avif']);
     const strippedName = file.filename.replace(/\.part\d+$/i, '');
     const realExt = path.extname(strippedName).toLowerCase();
     const isImageFile = file.category === 'image' || IMAGE_EXTS_SET.has(realExt);
-    
-    if (isImageFile && sharp) {
-      // Use a temp file (NOT persistent volume) to avoid filling storage
-      const tmpPath = path.join(require('os').tmpdir(), `thumb_tmp_${fileKey}${ext}`);
-      
+    const totalSize = Number(file.total_size) || 0;
+    const maySharp = !!sharp && isImageFile &&
+      (generate || (totalSize > 0 && totalSize <= THUMB_AUTO_BYTES));
+
+    const nativePath = path.join(thumbDir, `${fileKey}.jpg`);
+    const webpPath = path.join(thumbDir, `${fileKey}.webp`);
+
+    // Two requests for the same key arriving together — grid and list both
+    // mounted, or a fast re-render — share one piece of work.
+    const built = await dedupeCacheWork(`thumb:${fileKey}:${maySharp ? 'full' : 'native'}`, async () => {
+      await acquireThumbSlot();
       try {
-        console.log(`Downloading file for thumbnail generation: ${file.filename}`);
         await ensureConnection();
-        const msgs = await client.getMessages(config.chatId, { ids: [parseInt(file.telegram_media_id)] });
-        if (msgs && msgs.length > 0 && msgs[0].media) {
-          await client.downloadMedia(msgs[0].media, {
-            outputFile: tmpPath,
-            workers: 4
-          });
-        }
+        const messages = await client.getMessages(config.chatId, { ids: [parseInt(file.telegram_media_id)] });
+        const msg = messages && messages[0];
+        if (!msg || !msg.media) return null;
 
-        if (fs.existsSync(tmpPath)) {
-          const thumbBuffer = await sharp(tmpPath)
-            .resize(300, 300, { fit: 'cover', position: 'centre' })
-            .webp({ quality: 65 })
-            .toBuffer();
-          fs.writeFileSync(thumbWebpPath, thumbBuffer);
+        const thumbBuffer = await downloadTelegramThumb(msg);
+        if (thumbBuffer) {
+          fs.writeFileSync(nativePath, thumbBuffer);
           db.updateFileThumb(fileKey, 'local_cached');
-          res.setHeader('Content-Type', 'image/webp');
-          console.log(`Sharp thumbnail generated: ${file.filename}`);
-          
-          // IMPORTANT: Delete temp file immediately to save storage
-          try { fs.unlinkSync(tmpPath); } catch {}
-          
-          return res.send(thumbBuffer);
+          return nativePath;
         }
-      } catch (sharpErr) {
-        console.error('Sharp thumbnail generation failed:', sharpErr.message);
-        // Clean up temp file on error too
-        try { fs.unlinkSync(tmpPath); } catch {}
-      }
-    }
 
-    return res.status(404).end();
+        if (!maySharp) return null;
+
+        const tmpPath = path.join(require('os').tmpdir(), `thumb_tmp_${fileKey}${ext}`);
+        try {
+          console.log(`Thumbnail from original (${(totalSize / 1024 / 1024).toFixed(1)} MB): ${file.filename}`);
+          await client.downloadMedia(msg.media, { outputFile: tmpPath, workers: 4 });
+          if (!fs.existsSync(tmpPath)) return null;
+          const buf = await sharp(tmpPath)
+            .resize(400, 400, { fit: 'cover', position: 'centre' })
+            .webp({ quality: 70 })
+            .toBuffer();
+          fs.writeFileSync(webpPath, buf);
+          db.updateFileThumb(fileKey, 'local_cached');
+          return webpPath;
+        } finally {
+          try { fs.unlinkSync(tmpPath); } catch {}
+        }
+      } finally {
+        releaseThumbSlot();
+      }
+    });
+
+    if (!built) {
+      thumbMisses.set(fileKey, Date.now());
+      return sendNoThumb(res);
+    }
+    return sendCachedThumb(res, built);
   } catch (err) {
-    console.error('Thumbnail error:', err);
+    console.error('Thumbnail error:', err.message);
+    thumbMisses.set(fileKey, Date.now());
     if (!res.headersSent) res.status(500).end();
   }
 });
@@ -1142,6 +1388,13 @@ app.get('/api/preview/:fileKey', checkConfig, async (req, res) => {
     }
 
     const mimeType = getMimeTypeByFilename(baseName);
+
+    // Every branch below answers with these. `inline` is what lets a PDF render
+    // inside the preview frame instead of becoming a download in Firefox and
+    // Safari, and the cached original behind a file_key never changes, so an
+    // hour of private caching removes the re-fetch when the pane is reopened.
+    res.setHeader('Content-Disposition', "inline; filename*=UTF-8''" + encodeURIComponent(baseName));
+    res.setHeader('Cache-Control', 'private, max-age=3600');
 
     // For images, use compressed preview if available
     if (category === 'image') {
@@ -1179,6 +1432,55 @@ app.get('/api/preview/:fileKey', checkConfig, async (req, res) => {
   } catch (err) {
     console.error('Preview error:', err);
     db.logActivity('Download', `Gagal mengunduh pratinjau: ${err.message}`, 'error');
+    if (!res.headersSent) res.status(500).json({ error: err.message });
+  }
+});
+
+// 7a. Text preview — bounded.
+//
+// The old text branch pointed the client at /api/preview and read the whole
+// body, so a 200 MB log became a 200 MB fetch that the browser then tried to
+// lay out inside one <pre>. This returns at most TEXT_PREVIEW_BYTES and reports
+// what it left out, so the pane can say "256 KB pertama dari 1,2 GB" instead of
+// freezing. The original still comes down from Telegram in full — a ranged
+// MTProto read is a far larger change — so the client keeps its own ceiling on
+// which files are worth opening as text at all.
+const TEXT_PREVIEW_BYTES = 256 * 1024;
+
+app.get('/api/text/:fileKey', checkConfig, async (req, res) => {
+  const { fileKey } = req.params;
+  try {
+    const resolved = await resolveFileParts(fileKey);
+    if (!resolved) return res.status(404).json({ error: 'File tidak ditemukan.' });
+
+    const { file, parts, baseName, isSplit } = resolved;
+    if (!file.telegram_media_id) {
+      return res.status(400).json({ error: 'Berkas lama tidak didukung pada skema login MTProto baru.' });
+    }
+
+    const targetPath = isSplit
+      ? await ensureMergedCache(fileKey, parts, baseName)
+      : await ensureCachedOriginal(file, fileKey, baseName, 'text-preview');
+
+    const stat = fs.statSync(targetPath);
+    const limit = Math.min(TEXT_PREVIEW_BYTES, stat.size);
+    const buf = Buffer.alloc(limit);
+    const fd = fs.openSync(targetPath, 'r');
+    try { fs.readSync(fd, buf, 0, limit, 0); } finally { fs.closeSync(fd); }
+
+    let text = buf.toString('utf8');
+    const truncated = stat.size > limit;
+    // A multi-byte character straddling the cut renders as a replacement glyph,
+    // so when there is more to come the tail is trimmed to the last newline.
+    if (truncated) {
+      const nl = text.lastIndexOf('\n');
+      if (nl > limit / 2) text = text.slice(0, nl);
+    }
+
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    res.json({ text, truncated, bytes: limit, totalBytes: stat.size });
+  } catch (err) {
+    console.error('Text preview error:', err.message);
     if (!res.headersSent) res.status(500).json({ error: err.message });
   }
 });
@@ -1359,12 +1661,16 @@ app.get('/api/logs', (req, res) => {
 
 // 13. Sync — Scan Telegram channel and add missing files to database
 let syncInProgress = false;
+// Last run's tally, surfaced through /api/sync-status so the UI can say what a
+// sync actually did instead of only that it finished.
+let syncProgress = { added: 0, skipped: 0, scanned: 0, errors: 0, finishedAt: null, aborted: null };
 
 app.post('/api/sync', checkConfig, async (req, res) => {
   if (syncInProgress) {
     return res.json({ success: true, message: 'Sync sudah berjalan...' });
   }
   syncInProgress = true;
+  syncProgress = { added: 0, skipped: 0, scanned: 0, errors: 0, finishedAt: null, aborted: null };
   res.json({ success: true, message: 'Memulai sinkronisasi...' });
 
   // Continue in background
@@ -1373,14 +1679,24 @@ app.post('/api/sync', checkConfig, async (req, res) => {
     console.log(`Sync selesai: ${result.added} file baru ditambahkan, ${result.skipped} sudah ada.`);
   }).catch(err => {
     syncInProgress = false;
+    syncProgress.aborted = err.message;
+    syncProgress.finishedAt = new Date().toISOString();
     console.error('Sync error:', err.message);
+    db.logActivity('Sync', `Sinkronisasi gagal: ${err.message}`, 'error');
   });
 });
+
+const SYNC_BATCH = 100;
+const SYNC_MAX_RETRIES = 3;      // per batch, for errors that are not FLOOD_WAIT
+const SYNC_MAX_FLOOD_WAIT = 300; // seconds; longer than this and we give up rather than hang
 
 async function syncAllFromChannel() {
   let added = 0;
   let skipped = 0;
+  let scanned = 0;
+  let errors = 0;
   let offsetId = 0;
+  let retries = 0;
 
   console.log('Memulai sinkronisasi dari channel Telegram...');
   db.logActivity('Sync', 'Memulai sinkronisasi dari channel Telegram...');
@@ -1388,82 +1704,103 @@ async function syncAllFromChannel() {
   await ensureConnection();
 
   while (true) {
+    let messages;
     try {
       const result = await client.invoke(new Api.messages.GetHistory({
         peer: config.chatId,
         offsetId: offsetId,
         offsetDate: 0,
         addOffset: 0,
-        limit: 100,
+        limit: SYNC_BATCH,
         maxId: 0,
         minId: 0,
         hash: 0
       }));
-
-      const messages = result.messages || [];
-      if (messages.length === 0) break;
-
-      for (const msg of messages) {
-        try {
-          // Skip empty messages or non-document media
-          if (!msg.media || !msg.media.document) continue;
-
-          const doc = msg.media.document;
-          const filename = (doc.attributes || [])
-            .filter(a => a.className === 'DocumentAttributeFilename')
-            .map(a => a.fileName)[0] || `file_${msg.id}`;
-          const mimeType = doc.mimeType || 'application/octet-stream';
-          // Convert Long/BigInt values to plain Number for SQLite binding
-          const totalSize = typeof doc.size === 'object' && doc.size !== null ? Number(doc.size) : (parseInt(doc.size) || 0);
-          const fileKey = `sync_${msg.id}`;
-
-          // Check if file already exists by file_key (message ID)
-          let existing;
-          try { existing = db.getFile(fileKey); } catch { existing = null; }
-          if (existing) {
-            skipped++;
-            continue;
-          }
-
-          const category = getCategory(filename, mimeType);
-          const telegramMediaId = msg.id.toString();
-          const accessHash = doc.accessHash ? (typeof doc.accessHash === 'object' ? doc.accessHash.toString() : String(doc.accessHash)) : '0';
-          const fileReference = doc.fileReference ? (Buffer.isBuffer(doc.fileReference) ? doc.fileReference.toString('hex') : String(doc.fileReference)) : '';
-          const dcId = typeof doc.dcId === 'object' && doc.dcId !== null ? Number(doc.dcId) : (parseInt(doc.dcId) || 4);
-
-          db.saveFile(fileKey, filename, mimeType, category, totalSize, telegramMediaId, accessHash, fileReference, null, dcId);
-          added++;
-
-
-        } catch (msgErr) {
-          console.error(`Error syncing message ID ${msg.id}:`, msgErr.message);
-        }
-      }
-
-      // Update offset to get older messages (pagination)
-      if (messages.length > 0) {
-        offsetId = messages[messages.length - 1].id;
-      }
-
-      // If less than 100 messages, we've reached the end
-      if (messages.length < 100) break;
-
-      // Small delay to avoid rate limiting
-      await new Promise(r => setTimeout(r, 200));
+      messages = result.messages || [];
+      retries = 0;
     } catch (err) {
-      console.error('Sync batch error:', err.message);
-      break;
+      const wait = floodWaitSeconds(err);
+      if (wait > 0 && wait <= SYNC_MAX_FLOOD_WAIT) {
+        console.log(`Sync: FLOOD_WAIT ${wait}s — menunggu lalu melanjutkan dari offset ${offsetId}.`);
+        db.logActivity('Sync', `Telegram meminta jeda ${wait}s; sinkronisasi dilanjutkan setelah itu.`);
+        await new Promise(r => setTimeout(r, (wait + 1) * 1000));
+        continue; // same offsetId — this batch was never read
+      }
+      if (++retries <= SYNC_MAX_RETRIES) {
+        console.error(`Sync batch error (percobaan ${retries}/${SYNC_MAX_RETRIES}): ${err.message}`);
+        await new Promise(r => setTimeout(r, 1000 * retries));
+        continue;
+      }
+      // Out of retries. Fail loudly instead of returning a partial tally that
+      // reads like a complete one.
+      throw new Error(`gagal membaca riwayat pada offset ${offsetId}: ${err.message}`);
     }
+
+    if (messages.length === 0) break;
+
+    for (const msg of messages) {
+      scanned++;
+      try {
+        const info = describeSyncMedia(msg);
+        if (!info) continue;
+
+        const fileKey = `sync_${msg.id}`;
+        let existing;
+        try { existing = db.getFile(fileKey); } catch { existing = null; }
+        if (existing) {
+          skipped++;
+          continue;
+        }
+
+        const category = getCategory(info.filename, info.mimeType);
+        db.saveFile(
+          fileKey,
+          info.filename,
+          info.mimeType,
+          category,
+          info.totalSize,
+          msg.id.toString(),
+          info.accessHash,
+          info.fileReference,
+          null,
+          info.dcId
+        );
+        added++;
+      } catch (msgErr) {
+        errors++;
+        console.error(`Error syncing message ID ${msg.id}:`, msgErr.message);
+      }
+    }
+
+    syncProgress.added = added;
+    syncProgress.skipped = skipped;
+    syncProgress.scanned = scanned;
+    syncProgress.errors = errors;
+
+    // GetHistory returns newest → oldest, so the last entry is the oldest one
+    // read; offsetId walks backwards from there.
+    offsetId = messages[messages.length - 1].id;
+
+    if (messages.length < SYNC_BATCH) break;
+
+    // Small delay to avoid rate limiting
+    await new Promise(r => setTimeout(r, 200));
   }
 
-  const result = { added, skipped };
-  db.logActivity('Sync', `Sinkronisasi selesai: ${result.added} file baru, ${result.skipped} sudah ada.`);
+  const result = { added, skipped, scanned, errors };
+  syncProgress = { ...result, finishedAt: new Date().toISOString(), aborted: null };
+  db.logActivity(
+    'Sync',
+    `Sinkronisasi selesai: ${added} file baru, ${skipped} sudah ada, ${scanned} pesan diperiksa` +
+    (errors ? `, ${errors} gagal disimpan.` : '.'),
+    errors ? 'error' : 'success'
+  );
   return result;
 }
 
 // 14. Sync status
 app.get('/api/sync-status', (req, res) => {
-  res.json({ syncing: syncInProgress });
+  res.json({ syncing: syncInProgress, progress: syncProgress });
 });
 
 // 15. Stats

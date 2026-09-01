@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="theme-color" content="#171717">
-  <title>Nexus Drive — Telegram Cloud Storage</title>
+  <title>Drive Uyee — Telegram Cloud Storage</title>
   <meta name="description" content="Unlimited cloud drive powered by Telegram. Fast, secure, free.">
 
   <!-- Apply saved theme before first paint -->
@@ -18,18 +18,23 @@
     })();
   </script>
 
-  <link rel="stylesheet" href="/css/app.css">
+  <link rel="stylesheet" href="/css/nexus.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" media="print" onload="this.media='all'">
-  <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"></noscript>
+  <!-- Both families in one request. JetBrains Mono is not decorative: `font-mono`
+       is what makes the OTP field, the phone field and the file-size/ID columns
+       line up in a grid, and until it was requested here every one of those fell
+       back to the browser default monospace (usually Courier New on Windows),
+       which is why the login screens looked unfinished. -->
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" media="print" onload="this.media='all'">
+  <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"></noscript>
 </head>
 <body class="antialiased">
 
   <!-- ══════════════════════════════════════════════════════════
        LOGIN GATE
        ══════════════════════════════════════════════════════════ -->
-  <div id="login-gate" class="fixed inset-0 bg-obsidian/50 backdrop-blur-md z-[60] flex items-center justify-center p-4 hidden">
+  <div id="login-gate" class="auth-screen z-[60] hidden">
     <div class="card w-full max-w-sm p-8">
       <div class="flex flex-col items-center mb-8">
         <div class="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center mb-4 border border-primary/15">
@@ -37,16 +42,16 @@
             <path d="M18 10l-6-6-6 6"/><path d="M12 4v16"/>
           </svg>
         </div>
-        <h1 class="text-2xl font-semibold tracking-tight">Nexus Drive</h1>
+        <h1 class="text-2xl font-semibold tracking-tight">Drive Uyee</h1>
         <p class="text-center text-sm text-textGray mt-2">Masukkan password untuk mengakses drive Anda.</p>
       </div>
 
       <form id="login-form" class="flex flex-col gap-5">
         <div class="flex flex-col gap-2">
-          <label for="login-password" class="text-[11px] font-semibold text-textGray uppercase tracking-wider">Password</label>
+          <label for="login-password" class="field-label">Password</label>
           <input type="password" id="login-password" placeholder="Password drive" class="input" required autocomplete="current-password">
         </div>
-        <div id="login-error" class="hidden text-xs bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-control"></div>
+        <div id="login-error" class="hidden note-error"></div>
         <button type="submit" class="btn-primary w-full py-3">
           <span>Masuk</span>
           <div class="spin hidden w-4 h-4 border-2 border-white rounded-full animate-spin" style="border-top-color:transparent"></div>
@@ -58,7 +63,7 @@
   <!-- ══════════════════════════════════════════════════════════
        SETUP WIZARD
        ══════════════════════════════════════════════════════════ -->
-  <div id="setup-wizard" class="fixed inset-0 bg-obsidian/50 backdrop-blur-md z-50 flex items-center justify-center p-4 hidden">
+  <div id="setup-wizard" class="auth-screen z-50 hidden">
     <div class="card w-full max-w-md p-6 sm:p-8 max-h-[92vh] overflow-y-auto custom-scrollbar">
       <div class="flex flex-col items-center mb-8">
         <div class="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center mb-4 border border-primary/15">
@@ -70,33 +75,46 @@
         <p class="text-center text-sm text-textGray mt-2">Login dengan akun Telegram Anda untuk penyimpanan langsung tanpa batas.</p>
       </div>
 
+      <!-- Step indicator -->
+      <ol class="step-track" aria-label="Progres setup">
+        <li class="step-item active" data-step="1"><span class="step-dot">1</span><span class="step-label">Nomor</span></li>
+        <li class="step-item" data-step="2"><span class="step-dot">2</span><span class="step-label">Verifikasi</span></li>
+      </ol>
+
       <!-- Step 1: Request OTP -->
       <form id="setup-form-step1" class="flex flex-col gap-5">
         <div class="flex flex-col gap-2">
-          <label for="phone-number" class="text-[11px] font-semibold text-textGray uppercase tracking-wider">Nomor Telepon</label>
+          <label for="phone-number" class="field-label">Nomor Telepon</label>
           <input type="tel" id="phone-number" value="+62" placeholder="+628123456789" class="input" required autocomplete="tel">
-          <span class="text-xs text-textGray/60">Gunakan format internasional, contoh: +62812...</span>
+          <span class="field-hint">Gunakan format internasional, contoh: +62812...</span>
         </div>
 
-        <details class="border-t border-cloud pt-4" open>
-          <summary class="list-none flex items-center justify-between text-xs font-semibold text-textDark cursor-pointer outline-none select-none">
-            <span>Kredensial API Telegram</span>
-            <svg class="w-4 h-4 transition-transform group-open:rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+        <!-- Shown when the server already holds API credentials (config.json / env),
+             so the user never has to retype them. -->
+        <div id="api-creds-detected" class="hidden note-success">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4 shrink-0"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+          <span>Kredensial API tersimpan permanen dan sudah terisi otomatis — biarkan apa adanya.</span>
+        </div>
+
+        <details id="api-creds-details" class="disclosure">
+          <summary class="disclosure-summary">
+            <span id="api-creds-summary-text">Kredensial API Telegram</span>
+            <svg class="disclosure-chevron" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
           </summary>
           <div class="flex flex-col gap-4 mt-4">
             <div class="flex flex-col gap-2">
-              <label for="api-id" class="text-[11px] font-semibold text-textGray uppercase tracking-wider">API ID</label>
-              <input type="text" id="api-id" placeholder="1234567" class="input" required autocomplete="off" inputmode="numeric">
+              <label for="api-id" class="field-label">API ID</label>
+              <input type="text" id="api-id" placeholder="1234567" class="input" autocomplete="off" inputmode="numeric">
             </div>
             <div class="flex flex-col gap-2">
-              <label for="api-hash" class="text-[11px] font-semibold text-textGray uppercase tracking-wider">API Hash</label>
-              <input type="text" id="api-hash" placeholder="32 karakter heksadesimal" class="input" required autocomplete="off">
+              <label for="api-hash" class="field-label">API Hash</label>
+              <input type="text" id="api-hash" placeholder="32 karakter heksadesimal" class="input" autocomplete="off">
             </div>
-            <span class="text-xs text-textGray/60">Daftarkan aplikasi Anda di <a href="https://my.telegram.org" target="_blank" rel="noopener" class="text-primary">my.telegram.org</a> — gratis.</span>
+            <span class="field-hint">Biarkan seperti apa adanya untuk memakai kredensial yang tersimpan. Daftar sendiri di <a href="https://my.telegram.org" target="_blank" rel="noopener" class="text-accent font-medium">my.telegram.org</a> — gratis.</span>
           </div>
         </details>
 
-        <div id="step1-error" class="hidden text-xs bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-control"></div>
+        <div id="step1-error" class="hidden note-error"></div>
         <button type="submit" id="btn-send-otp" class="btn-primary w-full py-3">
           <span>Kirim Kode OTP</span>
           <div class="spin hidden w-4 h-4 border-2 border-white rounded-full animate-spin" style="border-top-color:transparent"></div>
@@ -106,20 +124,21 @@
       <!-- Step 2: Verify OTP + Sign In -->
       <form id="setup-form-step2" class="hidden flex flex-col gap-5">
         <div class="flex flex-col gap-2">
-          <label for="otp-code" class="text-[11px] font-semibold text-textGray uppercase tracking-wider">Kode OTP</label>
-          <input type="text" id="otp-code" placeholder="Masukkan kode dari Telegram" class="input" required autocomplete="one-time-code" inputmode="numeric">
+          <label for="otp-code" class="field-label">Kode OTP</label>
+          <input type="text" id="otp-code" placeholder="Masukkan kode dari Telegram" class="input input-otp" required autocomplete="one-time-code" inputmode="numeric">
+          <span class="field-hint">Kode dikirim lewat aplikasi Telegram, bukan SMS.</span>
         </div>
         <div class="field hidden flex flex-col gap-2" id="field-2fa">
-          <label for="password-2fa" class="text-[11px] font-semibold text-textGray uppercase tracking-wider">Password 2FA</label>
+          <label for="password-2fa" class="field-label">Password 2FA</label>
           <input type="password" id="password-2fa" placeholder="Password Verifikasi 2 Langkah" class="input" autocomplete="off">
         </div>
         <div class="flex flex-col gap-2">
-          <label for="storage-chat-id" class="text-[11px] font-semibold text-textGray uppercase tracking-wider">Storage Chat ID (Opsional)</label>
+          <label for="storage-chat-id" class="field-label">Storage Chat ID <span class="badge-optional">opsional</span></label>
           <input type="text" id="storage-chat-id" placeholder="-1001234567890" class="input" autocomplete="off">
-          <span class="text-xs text-textGray/60">ID grup/channel tujuan penyimpanan. Bisa diatur nanti di Pengaturan.</span>
+          <span class="field-hint">ID grup/channel tujuan penyimpanan. Bisa diatur nanti di Pengaturan.</span>
         </div>
-        <div id="step2-error" class="hidden text-xs bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-control"></div>
-        <div id="step2-success" class="hidden text-xs bg-emerald-50 border border-emerald-200 text-emerald-600 px-4 py-3 rounded-control"></div>
+        <div id="step2-error" class="hidden note-error"></div>
+        <div id="step2-success" class="hidden note-success"></div>
         <div class="flex gap-3">
           <button type="button" id="btn-back-step1" class="btn-ghost flex-1 py-2.5">Kembali</button>
           <button type="submit" id="btn-verify-otp" class="btn-primary flex-1 py-2.5">
@@ -139,7 +158,7 @@
     <!-- Mobile sidebar backdrop -->
     <div id="sidebar-backdrop"></div>
 
-    <div id="app-shell" class="flex flex-col md:flex-row md:gap-4 md:p-4 md:h-[calc(100vh-3rem)] md:overflow-hidden">
+    <div id="app-shell" class="flex flex-col md:flex-row md:gap-4 md:p-4 md:h-screen md:overflow-hidden">
 
       <!-- ─── MOBILE TOP BAR ─── -->
       <header id="topbar" class="md:hidden flex items-center justify-between gap-3 px-4 py-3 bg-surface border-b border-cloud">
@@ -151,22 +170,22 @@
             <div class="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center shrink-0 border border-primary/15">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4 text-primary"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             </div>
-            <span class="text-sm font-semibold tracking-tight truncate">Nexus Drive</span>
+            <span class="text-sm font-semibold tracking-tight truncate">Drive Uyee</span>
           </div>
         </div>
         <div id="topbar-actions" class="flex items-center gap-2 shrink-0"></div>
       </header>
 
       <!-- ─── SIDEBAR ─── -->
-      <aside id="sidebar" class="w-72 md:w-64 lg:w-72 shrink-0 flex flex-col gap-4 p-5 md:h-full md:overflow-y-auto custom-scrollbar relative">
+      <aside id="sidebar" class="w-72 md:w-64 lg:w-72 shrink-0 flex flex-col gap-3 p-4 md:h-full md:overflow-hidden relative">
 
         <!-- Brand (desktop) -->
-        <div class="hidden md:flex items-center gap-3 mb-2">
+        <div class="hidden md:flex items-center gap-3 shrink-0">
           <div class="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center border border-primary/15 shrink-0">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-5 h-5 text-primary"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           </div>
           <div class="overflow-hidden">
-            <h1 class="text-base font-semibold tracking-tight truncate">Nexus Drive</h1>
+            <h1 class="text-base font-semibold tracking-tight truncate">Drive Uyee</h1>
             <p class="text-[10px] text-textGray font-medium uppercase tracking-wider truncate">Cloud Platform</p>
           </div>
         </div>
@@ -177,15 +196,15 @@
         </button>
 
         <!-- Connection Status -->
-        <div class="flex items-center gap-2 bg-paper border border-cloud px-3 py-1.5 rounded-control w-max" id="conn-dot">
+        <div class="flex items-center gap-2 bg-paper border border-cloud px-3 py-1.5 rounded-control w-max shrink-0" id="conn-dot">
           <span class="w-2 h-2 rounded-full animate-pulse dot" style="background-color:rgb(var(--c-success))"></span>
           <span class="text-[10px] font-mono font-semibold tracking-wider text-textGray">TERHUBUNG</span>
         </div>
 
-        <div class="border-t border-cloud"></div>
+        <div class="border-t border-cloud shrink-0"></div>
 
         <!-- Navigation -->
-        <nav class="flex flex-col gap-1">
+        <nav class="flex flex-col gap-1 flex-1 min-h-0 overflow-y-auto">
           <span class="text-[10px] font-mono font-semibold text-textGray uppercase tracking-wider mb-1 px-2">Kategori</span>
           <button class="nav-btn active" data-category="all">
             <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
@@ -217,22 +236,23 @@
           </button>
         </nav>
 
-        <div class="flex-1 min-h-0"></div>
-
         <!-- Storage Widget -->
-        <div class="bg-paper p-4 rounded-control border border-cloud">
-          <h3 class="text-[10px] font-mono font-bold text-textGray uppercase tracking-wider mb-2">Penyimpanan</h3>
-          <div class="w-full rounded-full h-1.5 mb-2 overflow-hidden" style="background-color:rgb(var(--c-border))">
+        <div class="bg-paper p-3 rounded-control border border-cloud shrink-0">
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="section-title">Penyimpanan</h3>
+            <span id="storage-percent" class="stat-caption text-accent">0%</span>
+          </div>
+          <div class="w-full rounded-full h-2 mb-2 overflow-hidden" style="background-color:rgb(var(--c-border))">
             <div id="storage-fill" class="bg-primary h-full rounded-full transition-all duration-700" style="width: 0%;"></div>
           </div>
-          <div class="flex justify-between items-center text-[10px] font-mono text-textGray">
-            <span id="storage-used" class="font-semibold text-textDark">0 B</span>
-            <span>15 GB</span>
+          <div class="flex justify-between items-baseline text-[10px] font-mono text-textGray">
+            <span id="storage-used" class="text-sm font-semibold text-textDark font-sans">0 B</span>
+            <span>dari 15 GB</span>
           </div>
         </div>
 
         <!-- Upload Zone -->
-        <div id="dropzone" class="bg-paper p-4 rounded-control border border-dashed border-cloud hover:border-primary transition-colors group relative">
+        <div id="dropzone" class="bg-paper p-3 rounded-control border border-dashed border-cloud hover:border-primary transition-colors group relative shrink-0">
           <div class="flex flex-col items-center justify-center text-center gap-2">
             <div class="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary group-hover:scale-110 transition-transform">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
@@ -242,7 +262,7 @@
               <p class="text-[10px] text-textGray">Seret ke sini</p>
             </div>
           </div>
-          <div class="flex gap-2 mt-3 relative z-10">
+          <div class="flex gap-2 mt-2.5 relative z-10">
             <button id="btn-upload-file" class="btn-primary flex-1 text-[10px] font-bold uppercase tracking-wider py-2">File</button>
             <button id="btn-upload-folder" class="btn-ghost flex-1 text-[10px] font-bold uppercase tracking-wider py-2">Folder</button>
           </div>
@@ -291,9 +311,9 @@
         </header>
 
         <!-- Sub Toolbar (Filters) -->
-        <div class="card px-4 py-2.5 flex flex-wrap items-center gap-3 shrink-0">
-          <div class="flex items-center gap-2">
-            <span class="text-[10px] font-mono text-textGray uppercase">Urutkan:</span>
+        <div class="card px-4 py-3 toolbar shrink-0">
+          <div class="toolbar-group">
+            <span class="toolbar-label">Urutkan</span>
             <div class="custom-dropdown" id="dd-sort" data-value="newest">
               <button class="custom-dropdown-trigger" type="button" aria-haspopup="listbox" aria-expanded="false">
                 <span class="custom-dropdown-label">Terbaru</span>
@@ -309,8 +329,10 @@
               </div>
             </div>
           </div>
-          <div class="flex items-center gap-2">
-            <span class="text-[10px] font-mono text-textGray uppercase">Ukuran:</span>
+          <div class="toolbar-divider hidden sm:block"></div>
+
+          <div class="toolbar-group">
+            <span class="toolbar-label">Ukuran</span>
             <div class="custom-dropdown" id="dd-size" data-value="all">
               <button class="custom-dropdown-trigger" type="button" aria-haspopup="listbox" aria-expanded="false">
                 <span class="custom-dropdown-label">Semua</span>
@@ -324,16 +346,28 @@
               </div>
             </div>
           </div>
-          <div class="flex items-center gap-2 flex-1 min-w-[120px]">
-            <span class="text-[10px] font-mono text-textGray uppercase shrink-0">Ext:</span>
-            <input type="text" id="filter-extension" placeholder="pdf, zip" class="w-full bg-transparent border border-cloud rounded-control text-textDark text-xs outline-none px-2 py-1 font-mono placeholder-textGray/40 transition focus:border-primary">
+          <div class="toolbar-divider hidden sm:block"></div>
+
+          <div class="toolbar-group flex-1 min-w-[140px]">
+            <span class="toolbar-label">Ekstensi</span>
+            <input type="text" id="filter-extension" placeholder="pdf, zip, mp4" class="input py-1.5 text-xs font-mono" style="height:34px">
+          </div>
+
+          <div class="toolbar-group ml-auto">
+            <span id="file-count-badge" class="stat-caption">0 berkas</span>
           </div>
         </div>
 
         <!-- File List Area -->
         <div class="card flex-1 relative overflow-hidden flex flex-col">
           <div id="folder-breadcrumb" class="hidden shrink-0 flex items-center gap-1.5 text-xs text-textGray font-mono m-4 mb-0 bg-paper border border-cloud px-3 py-2 rounded-control"></div>
-          <h2 id="ws-title" class="text-sm font-semibold tracking-tight border-l-2 border-primary pl-2 mx-4 mt-4 mb-2">Drive Saya</h2>
+          <div class="flex items-center justify-between gap-3 mx-4 mt-4 mb-3">
+            <h2 id="ws-title" class="text-base font-semibold tracking-tight border-l-[3px] border-primary pl-2.5">Drive Saya</h2>
+            <button id="btn-refresh" class="btn-soft py-1.5 px-3 text-[11px] uppercase tracking-wider" title="Muat ulang daftar berkas">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+              <span>Muat Ulang</span>
+            </button>
+          </div>
 
           <div class="relative flex-1 overflow-y-auto custom-scrollbar p-3 sm:p-4">
             <!-- Loading overlay -->
@@ -419,6 +453,8 @@
             <button type="button" class="btn-danger flex-1 py-2.5" id="btn-logout">Keluar Sesi</button>
             <button type="button" class="btn-danger flex-1 py-2.5" id="btn-reset-drive">Reset Drive</button>
           </div>
+          <button type="button" class="btn-ghost w-full py-2.5" id="btn-reset-creds">Reset Kredensial API</button>
+          <span class="text-xs text-textGray/60">API ID dan Hash tersimpan permanen dan terisi otomatis di form login. Hanya tombol ini yang menghapusnya.</span>
           <div class="flex gap-2 mt-2">
             <button type="button" class="btn-ghost flex-1 py-2.5" id="settings-cancel">Batal</button>
             <button type="submit" class="btn-primary flex-1 py-2.5" id="settings-save">
@@ -470,80 +506,100 @@
   </div>
 
   <!-- ══════════════════════════════════════════════════════════
-       LIGHTBOX
+       PREVIEW VIEWER
+       ----------------------------------------------------------
+       A full-screen dark viewer in the shape of Google Drive's, not a dialog:
+       one toolbar, then the file. Styling lives in the PREVIEW VIEWER block of
+       src/styles/app-shell.css; every branch (#pv-img … #pv-empty) is shown by
+       showPreviewSurface() in public/js/app.js, which hides all the others.
        ══════════════════════════════════════════════════════════ -->
-  <div id="lightbox" class="fixed inset-0 bg-obsidian/50 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-8 hidden">
-    <button id="lb-prev" class="absolute left-3 sm:left-6 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-obsidian/60 hover:bg-obsidian/80 text-white flex items-center justify-center transition hidden z-10 backdrop-blur" title="Sebelumnya" aria-label="Sebelumnya">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-6 h-6"><polyline points="15 18 9 12 15 6"/></svg>
-    </button>
-    <button id="lb-next" class="absolute right-3 sm:right-6 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-obsidian/60 hover:bg-obsidian/80 text-white flex items-center justify-center transition hidden z-10 backdrop-blur" title="Berikutnya" aria-label="Berikutnya">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-6 h-6"><polyline points="9 18 15 12 9 6"/></svg>
-    </button>
-
-    <div class="lb-dialog card w-full max-w-5xl overflow-hidden flex flex-col max-h-[92vh]">
-      <div class="px-4 sm:px-5 py-3 border-b border-cloud flex justify-between items-center shrink-0 gap-3">
-        <div class="flex items-center gap-2.5 overflow-hidden">
-          <span id="lb-title-icon" class="w-5 h-5 shrink-0 flex items-center justify-center"></span>
-          <h3 class="text-sm font-semibold tracking-tight truncate" id="lb-title-text">Pratinjau</h3>
-        </div>
-        <button class="btn-icon shrink-0" id="lb-close" aria-label="Tutup" style="width:2rem;height:2rem">&times;</button>
-      </div>
-
-      <div class="lb-content p-4 sm:p-6 flex flex-col items-center justify-center flex-1 overflow-y-auto max-h-[74vh] custom-scrollbar">
-        <div id="lb-loading" class="flex flex-col items-center gap-3">
-          <div class="w-8 h-8 border-2 border-primary rounded-full animate-spin" style="border-top-color:transparent"></div>
-          <p class="text-xs font-medium text-textGray">Mengunduh...</p>
-        </div>
-
-        <img id="lb-img" class="max-w-full max-h-[70vh] object-contain rounded-control hidden" alt="">
-        <video id="lb-video" class="max-w-full max-h-[70vh] rounded-control hidden bg-obsidian" controls playsinline></video>
-        <iframe id="lb-pdf" class="w-full h-[70vh] rounded-control hidden bg-surface border border-cloud" title="Pratinjau PDF"></iframe>
-        <pre id="lb-text" class="w-full h-[70vh] rounded-control hidden text-xs font-mono p-4 bg-surface border border-cloud text-left overflow-y-auto custom-scrollbar whitespace-pre-wrap select-text leading-relaxed text-textDark" style="margin:0"></pre>
-
-        <div id="lb-audio-container" class="hidden flex flex-col items-center justify-center p-6 sm:p-8 card w-full max-w-md gap-4">
-          <div class="w-20 h-20 bg-paper rounded-full flex items-center justify-center border border-cloud animate-[spin_8s_linear_infinite]" id="audio-disc">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="w-10 h-10 text-textDark">
-              <circle cx="12" cy="12" r="3"/>
-              <path d="M3 18v-6a9 9 0 0 1 18 0v6"/>
-              <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/>
-            </svg>
-          </div>
-          <div class="text-center flex flex-col gap-1">
-            <p class="text-sm font-semibold truncate w-[280px] max-w-full" id="lb-audio-title">-</p>
-            <p class="text-xs text-textGray font-medium" id="lb-audio-size">-</p>
-          </div>
-          <audio id="lb-audio" class="w-full mt-2" controls></audio>
-        </div>
-
-        <div id="lb-nopreview" class="flex flex-col items-center gap-4 text-textGray hidden p-8 card w-full max-w-sm">
-          <div class="w-16 h-16 bg-paper rounded-full flex items-center justify-center border border-cloud">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="w-8 h-8 text-textGray/60"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-          </div>
-          <div class="text-center flex flex-col gap-1">
-            <p class="text-xs font-semibold uppercase tracking-wider text-textGray">Pratinjau tidak tersedia</p>
-            <p class="text-[11px] text-textGray/60">Unduh berkas untuk membukanya secara lokal</p>
-          </div>
+  <div id="lightbox" class="pv-overlay hidden" role="dialog" aria-modal="true" aria-label="Pratinjau berkas">
+    <header class="pv-bar">
+      <div class="pv-bar-left">
+        <button id="lb-close" class="pv-icon-btn" title="Tutup (Esc)" aria-label="Tutup">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+        <span id="lb-title-icon" class="pv-file-icon" aria-hidden="true"></span>
+        <div class="pv-titles">
+          <span class="pv-name" id="lb-title-text">Pratinjau</span>
+          <span class="pv-meta" id="lb-meta">—</span>
         </div>
       </div>
 
-      <div class="px-4 sm:px-5 py-3.5 border-t border-cloud flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
-        <div class="min-w-0">
-          <h4 class="lb-name text-sm font-semibold truncate text-textDark" id="lb-name">-</h4>
-          <p class="lb-size text-xs text-textGray font-medium" id="lb-size">-</p>
-        </div>
-        <div class="flex gap-2 shrink-0 overflow-x-auto custom-scrollbar">
-          <a href="" id="lb-download" class="btn-primary text-xs py-2.5 px-4 rounded-full" download>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-3.5 h-3.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Unduh
-          </a>
-          <a href="" id="lb-download-original" class="btn-ghost text-xs py-2.5 px-4 rounded-full" download>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-3.5 h-3.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Asli
-          </a>
-          <button id="lb-delete" class="btn-danger text-xs py-2.5 px-4 rounded-full">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-3.5 h-3.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-            Hapus
+      <div class="pv-bar-right">
+        <span class="pv-counter" id="lb-counter"></span>
+
+        <div class="pv-zoom" id="lb-zoom">
+          <button class="pv-icon-btn" id="lb-zoom-out" title="Perkecil (-)" aria-label="Perkecil">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="20" y1="20" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
           </button>
+          <span class="pv-zoom-level" id="lb-zoom-level">100%</span>
+          <button class="pv-icon-btn" id="lb-zoom-in" title="Perbesar (+)" aria-label="Perbesar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="20" y1="20" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+          </button>
+        </div>
+
+        <a href="" id="lb-newtab" class="pv-icon-btn" target="_blank" rel="noopener" title="Buka di tab baru" aria-label="Buka di tab baru">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+        </a>
+        <a href="" id="lb-download" class="pv-icon-btn" download title="Unduh" aria-label="Unduh">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        </a>
+        <a href="" id="lb-download-original" class="pv-icon-btn" download title="Unduh berkas asli (tanpa kompresi)" aria-label="Unduh berkas asli">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v12"/><polyline points="7 10 12 15 17 10"/><rect x="3" y="18" width="18" height="3" rx="1.5"/></svg>
+        </a>
+        <button id="lb-delete" class="pv-icon-btn pv-danger" title="Hapus" aria-label="Hapus">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="pv-stage" id="lb-stage">
+      <button id="lb-prev" class="pv-nav pv-nav-prev hidden" title="Sebelumnya (←)" aria-label="Sebelumnya">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
+      <button id="lb-next" class="pv-nav pv-nav-next hidden" title="Berikutnya (→)" aria-label="Berikutnya">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+      </button>
+
+      <div class="pv-fit" id="lb-fit">
+        <div id="lb-loading" class="pv-loading">
+          <div class="pv-spinner"></div>
+          <p class="pv-loading-text" id="lb-loading-text">Memuat…</p>
+        </div>
+
+        <img id="lb-img" class="pv-img hidden" alt="">
+        <video id="lb-video" class="pv-video hidden" controls playsinline preload="metadata"></video>
+        <iframe id="lb-pdf" class="pv-frame hidden" title="Pratinjau dokumen"></iframe>
+
+        <div id="lb-text-wrap" class="pv-text-wrap hidden">
+          <div id="lb-text-note" class="pv-text-note hidden"></div>
+          <pre id="lb-text" class="pv-text"></pre>
+        </div>
+
+        <div id="lb-audio-container" class="pv-plate hidden">
+          <div class="pv-plate-icon pv-disc" id="lb-audio-disc">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>
+          </div>
+          <div>
+            <p class="pv-plate-title" id="lb-audio-title">—</p>
+            <p class="pv-plate-sub" id="lb-audio-size">—</p>
+          </div>
+          <audio id="lb-audio" controls preload="metadata"></audio>
+        </div>
+
+        <div id="lb-nopreview" class="pv-plate hidden">
+          <div class="pv-plate-icon" id="lb-empty-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          </div>
+          <div>
+            <p class="pv-plate-title" id="lb-empty-title">Pratinjau tidak tersedia</p>
+            <p class="pv-plate-sub" id="lb-empty-sub">Unduh berkas untuk membukanya secara lokal</p>
+          </div>
+          <a href="" id="lb-empty-download" class="pv-plate-action" download>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Unduh berkas
+          </a>
         </div>
       </div>
     </div>
@@ -578,7 +634,7 @@
        TOAST
        ══════════════════════════════════════════════════════════ -->
   <div id="toast" class="fixed bottom-6 left-6 bg-obsidian border border-obsidian text-white px-5 py-3 rounded-control text-xs font-medium shadow-lg z-50 flex items-center gap-3 hidden">
-    <span class="w-2 h-2 rounded-full animate-pulse" style="background-color:#ff5a00"></span>
+    <span class="w-2 h-2 rounded-full animate-pulse" style="background-color:rgb(var(--c-accent))"></span>
     <span id="toast-msg">Notifikasi</span>
   </div>
 

@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================================
-# Nexus Drive — Cloudflare Tunnel Setup (NO ACCOUNT REQUIRED)
+# Drive Uyee — Cloudflare Tunnel Setup (NO ACCOUNT REQUIRED)
 # ----------------------------------------------------------------------------
 # Exposes local server to internet via Cloudflare quick tunnel.
 # No account needed, no signup, no domain needed.

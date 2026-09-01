@@ -1,5 +1,38 @@
-/* Tailwind entry point — see tailwind.config.js for why this is optional.
-   The shipped stylesheet is public/css/app.css (hand-maintained + committed). */
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* ============================================================================
+   Drive Uyee — stylesheet entry point
+   ----------------------------------------------------------------------------
+   Build:   npm run build:css      (one-off, minified → public/css/nexus.css)
+            npm run watch:css      (rebuild on change, unminified)
+
+   Why the `@import "tailwindcss/…"` form instead of the `@tailwind` directives:
+   it makes the cascade order explicit and lets our own files be interleaved
+   between the layers, which is the whole reason this file exists. Order below
+   is load-bearing — read it top to bottom as "who can override whom".
+
+     1. tokens          custom properties only, no selectors that paint
+     2. tailwindcss/base  Preflight
+     3. base            our element-level defaults + keyframes
+     4. tailwindcss/components  (empty unless a plugin adds to it)
+     5. components      our class vocabulary — .btn-*, .card, .input, …
+     6. app-shell       #id-scoped rules for this specific layout
+     7. tailwindcss/utilities   every utility the scanner found in the markup
+     8. overrides       the only thing allowed to beat a utility
+
+   HISTORY — read this before touching public/css/*.
+   Until this file existed, `public/css/app.css` was a hand-transcribed copy of
+   Tailwind: every utility used in the markup had to be typed into the
+   stylesheet by hand or it silently did nothing. That cost the project four
+   full reskins and left three live bugs behind (a `.h-4` that set `width`, a
+   `max-h-[70vh]` that was never declared, and a `.hidden { !important }` that
+   killed every responsive display utility). Utilities are now generated. Do not
+   hand-write another one.
+   ========================================================================== */
+
+@import "./styles/tokens.css";
+@import "tailwindcss/base";
+@import "./styles/base.css";
+@import "tailwindcss/components";
+@import "./styles/components.css";
+@import "./styles/app-shell.css";
+@import "tailwindcss/utilities";
+@import "./styles/overrides.css";

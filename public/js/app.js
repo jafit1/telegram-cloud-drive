@@ -1,7 +1,7 @@
 /* ============================================================================
-   Nexus Drive — Frontend Application
+   Drive Uyee — Frontend Application
    ----------------------------------------------------------------------------
-   Modern minimalis UI logic. Works with index.html + app.css.
+   Modern minimalis UI logic. Works with index.html + css/nexus.css (built from src/input.css).
    Aligned with server.js API endpoints.
    ========================================================================== */
 
@@ -76,6 +76,58 @@ function getFileCategory(file) {
   return 'document';
 }
 
+// Whether to point an <img> at /api/thumb for this row.
+//
+// `telegram_thumb_id` only gets written once a thumbnail has already been
+// cached, so gating on it alone meant nothing synced from the channel ever
+// showed a preview — every one of those rows carries null and the grid was a
+// wall of grey generic icons. The endpoint builds a thumbnail on demand (native
+// Telegram thumb first, Sharp on the original as a fallback) and answers 404
+// when it truly cannot, so asking for one is safe: `loading="lazy"` keeps it to
+// the cards actually on screen, and every <img> below has an onerror that swaps
+// the file-type icon back in.
+// PDFs are worth asking for too: Telegram attaches a rendered first-page thumb
+// to the document itself, so the endpoint answers from `.thumbs` without ever
+// touching the original. Everything else stays on its icon — a 404 per card is
+// cheap but not free, and the negative cache only helps after the first miss.
+var THUMB_DOC_EXTS = ['pdf'];
+
+function shouldTryThumb(file, cat) {
+  if (file.telegram_thumb_id) return true;
+  if (cat === 'image' || cat === 'video') return true;
+  return THUMB_DOC_EXTS.indexOf(getFileExt(file.filename || file.name || '')) >= 0;
+}
+
+// Builds a thumbnail cell: the <img>, with the file-type icon sitting beside it
+// as a real element that the error handler reveals.
+//
+// It used to inline getFileIconSvg() into the onerror attribute itself. That
+// could never have worked — the SVG that function returns is full of double
+// quotes (class="w-8 h-8", viewBox="0 0 24 24") and the attribute was
+// double-quoted too, so the browser ended the handler at the first inner quote
+// and scattered the remainder of the SVG across the tag as stray attributes. A
+// thumbnail that 404'd left an empty box. Swapping the `hidden` class between
+// two siblings keeps the handler free of quote characters altogether.
+//
+// The fallback carries `hidden flex` on purpose: .hidden is emitted after .flex
+// in the generated utilities, so it wins until the class is removed and the
+// element then lays out as a centred flex box. Same idiom as the forms in
+// index.html.
+function thumbCell(file, cat, ext, wrapClass, iconColor) {
+  var fallback = '<div class="hidden flex w-full h-full items-center justify-center" style="color:' + iconColor + '">' +
+    getFileIconSvg(cat, ext) + '</div>';
+
+  if (!shouldTryThumb(file, cat)) {
+    return '<div class="' + wrapClass + '" style="color:' + iconColor + '">' + getFileIconSvg(cat, ext) + '</div>';
+  }
+
+  return '<div class="' + wrapClass + '">' +
+    '<img src="/api/thumb/' + encodeURIComponent(file.file_key) + '" class="w-full h-full object-cover" alt="" loading="lazy" decoding="async"' +
+    " onerror=\"this.classList.add('hidden');this.nextElementSibling.classList.remove('hidden')\">" +
+    fallback +
+    '</div>';
+}
+
 var extColors = {
   pdf: '#d93025', doc: '#1a73e8', docx: '#1a73e8', xls: '#1e8e3e', xlsx: '#1e8e3e',
   ppt: '#f9ab00', pptx: '#f9ab00', zip: '#f9ab00', rar: '#f9ab00', '7z': '#f9ab00',
@@ -92,13 +144,19 @@ function escapeHtml(s) {
   });
 }
 
-function showToast(msg) {
+function showToast(msg, kind) {
   var t = $('toast');
   if (!t) return;
   $('toast-msg').textContent = msg;
+  var dot = t.querySelector('span');
+  if (dot) {
+    dot.style.backgroundColor = kind === 'error' ? 'rgb(var(--c-danger))'
+      : kind === 'success' ? 'rgb(var(--c-success))'
+      : 'rgb(var(--c-accent))';
+  }
   t.classList.remove('hidden');
   clearTimeout(t._timer);
-  t._timer = setTimeout(function () { t.classList.add('hidden'); }, 3500);
+  t._timer = setTimeout(function () { t.classList.add('hidden'); }, kind === 'error' ? 6000 : 3500);
 }
 
 function showConfirm(message, onConfirm, title) {
@@ -146,8 +204,12 @@ function api(path, opts) {
 }
 
 function handleAuthRequired() {
-  if (state.setupNeeded) showSetupWizard();
-  else showLoginGate();
+  // A 401 means the drive session is missing or expired. Every wizard endpoint
+  // sits behind that same session, so showing the wizard again here would just
+  // reproduce the failure that got us here — the password gate is the only
+  // screen that can actually make progress.
+  state.loggedIn = false;
+  showLoginGate();
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -164,6 +226,66 @@ function showSetupWizard() {
   $('setup-wizard').classList.remove('hidden');
   $('login-gate').classList.add('hidden');
   $('app-dashboard').classList.add('hidden');
+  setWizardStep(1);
+  applyServerCredentials();
+}
+
+/* The wizard opens with both API boxes already filled from what the server has
+   stored: the ID verbatim, the Hash masked (bullets plus the last four — the real
+   value never leaves the server). Leaving them untouched is the normal path and
+   handleSendCode then sends neither field, so the server uses its own copy, which
+   survives logout and restarts. Typing over one is what replaces it.
+
+   This reads /api/settings rather than /api/settings/status because the status
+   endpoint is deliberately unauthenticated (the gate needs it before login) and
+   must not carry credential material. The wizard only ever renders after the
+   password gate — see init() — so the authenticated endpoint is available here. */
+function applyServerCredentials() {
+  var idEl = $('api-id');
+  var hashEl = $('api-hash');
+
+  // Dropping the flag on the first keystroke is the whole mechanism that tells
+  // "server value, untouched" apart from "the user typed this". Assigned as a
+  // property, not addEventListener, so reopening the wizard cannot stack them.
+  function markEdited() { delete this.dataset.serverFilled; }
+  idEl.oninput = markEdited;
+  hashEl.oninput = markEdited;
+
+  api('/api/settings')
+    .then(function (s) {
+      var hasBoth = !!(s.apiId && s.apiHashSet);
+      var note = $('api-creds-detected');
+      var details = $('api-creds-details');
+      var summary = $('api-creds-summary-text');
+
+      if (hasBoth) {
+        idEl.value = s.apiId;
+        idEl.dataset.serverFilled = '1';
+        hashEl.value = s.apiHashMasked || '';
+        hashEl.dataset.serverFilled = '1';
+        note.classList.remove('hidden');
+        details.open = false;
+        summary.textContent = 'Kredensial API tersimpan (buka untuk ganti)';
+      } else {
+        note.classList.add('hidden');
+        details.open = true;
+        summary.textContent = 'Kredensial API Telegram';
+      }
+
+      // Prefill the storage chat id so the user doesn't retype what's already set.
+      var chatInput = $('storage-chat-id');
+      if (chatInput && s.chatId && !chatInput.value) chatInput.value = s.chatId;
+    })
+    .catch(function () { /* wizard still works with manual entry */ });
+}
+
+function setWizardStep(step) {
+  var items = document.querySelectorAll('#setup-wizard .step-item');
+  Array.prototype.forEach.call(items, function (el) {
+    var n = parseInt(el.dataset.step, 10);
+    el.classList.toggle('active', n === step);
+    el.classList.toggle('done', n < step);
+  });
 }
 
 function showDashboard() {
@@ -184,6 +306,14 @@ function handleLogin(e) {
   api('/api/auth/login', { method: 'POST', body: { password: password } })
     .then(function () {
       state.loggedIn = true;
+      $('login-error').classList.add('hidden');
+      $('login-password').value = '';
+      // The drive password and the Telegram login are two separate steps. If
+      // the second one was never completed, go there instead of the dashboard.
+      if (state.setupNeeded) {
+        showSetupWizard();
+        return;
+      }
       showDashboard();
       loadFiles();
       checkConnection();
@@ -205,8 +335,10 @@ function handleLogin(e) {
 function handleSendCode(e) {
   e.preventDefault();
   var phone = $('phone-number').value.trim();
-  var apiId = $('api-id').value.trim();
-  var apiHash = $('api-hash').value.trim();
+  var idEl = $('api-id');
+  var hashEl = $('api-hash');
+  var apiId = idEl.value.trim();
+  var apiHash = hashEl.value.trim();
   var errEl = $('step1-error');
   var btn = $('btn-send-otp');
   var spin = btn.querySelector('.spin');
@@ -216,12 +348,21 @@ function handleSendCode(e) {
   span.textContent = 'Mengirim...';
   spin.classList.remove('hidden');
 
-  api('/api/auth/send-code', { method: 'POST', body: { phone: phone, apiId: apiId, apiHash: apiHash } })
+  // Send a credential field only when the user actually typed over it. The boxes
+  // arrive pre-filled from the server (and the Hash arrives masked), so sending
+  // them back unchanged would at best be a no-op and at worst push bullets into
+  // the hash validator. Untouched means: let the server use what it has stored.
+  var body = { phone: phone };
+  if (apiId && !idEl.dataset.serverFilled) body.apiId = apiId;
+  if (apiHash && !hashEl.dataset.serverFilled) body.apiHash = apiHash;
+
+  api('/api/auth/send-code', { method: 'POST', body: body })
     .then(function (data) {
       state.authId = data.authId;
       $('field-2fa').classList.add('hidden');
       $('setup-form-step1').classList.add('hidden');
       $('setup-form-step2').classList.remove('hidden');
+      setWizardStep(2);
       setTimeout(function () { var p = $('otp-code'); if (p) p.focus(); }, 100);
     })
     .catch(function (err) {
@@ -290,7 +431,15 @@ function loadFiles() {
   $('files-loading').classList.remove('hidden');
   api('/api/files')
     .then(function (data) {
-      state.files = data.files || [];
+      // GET /api/files responds with a bare JSON array (server.js: res.json(
+      // groupSplitFiles(...))), never an envelope. Reading data.files here gave
+      // undefined on every single call, so state.files fell through to [] and
+      // the drive rendered its empty state no matter how many rows the
+      // database held — which is why a completed sync and a finished upload
+      // both looked like they had done nothing. The array branch is the live
+      // one; the envelope branch is kept only so a future wrapped response
+      // does not silently blank the grid again.
+      state.files = Array.isArray(data) ? data : (data && data.files) || [];
       applyFilters();
       updateStorageInfo();
     })
@@ -365,6 +514,15 @@ function renderFiles() {
     ? 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3'
     : 'flex flex-col gap-1';
 
+  var countEl = $('file-count-badge');
+  if (countEl) {
+    var shown = state.filteredFiles.length;
+    var total = state.files.length;
+    countEl.textContent = shown === total
+      ? shown + ' berkas'
+      : shown + ' dari ' + total + ' berkas';
+  }
+
   if (state.filteredFiles.length === 0) {
     empty.classList.remove('hidden');
     container.classList.add('hidden');
@@ -383,29 +541,24 @@ function renderGrid(container) {
     card.dataset.fileKey = file.file_key;
 
     var isSelected = state.selectedIds.has(file.file_key);
-    if (isSelected) card.style.borderColor = 'rgb(var(--c-primary))';
+    if (isSelected) {
+      card.style.borderColor = 'rgb(var(--c-accent))';
+      card.style.boxShadow = '0 0 0 3px rgb(var(--c-accent) / 0.18)';
+    }
 
     var cat = getFileCategory(file);
     var ext = getFileExt(file.filename || file.name || '');
-    var iconHtml = '';
-
-    // Thumbnail or icon
-    if (file.telegram_thumb_id) {
-      var thumbUrl = '/api/thumb/' + file.file_key;
-      iconHtml = '<div class="aspect-square rounded-control overflow-hidden bg-paper border border-cloud flex items-center justify-center">' +
-        '<img src="' + thumbUrl + '" class="w-full h-full object-cover" alt="" loading="lazy" onerror="this.parentElement.innerHTML=\'<div style=color:' + getExtColor(ext) + '>' + getFileIconSvg(cat, ext) + '</div>\'">' +
-        '</div>';
-    } else {
-      var iconColor = cat === 'image' ? '#1e8e3e' : cat === 'video' ? '#d93025' : cat === 'audio' ? '#a142f4' : getExtColor(ext);
-      iconHtml = '<div class="aspect-square rounded-control bg-paper border border-cloud flex items-center justify-center">' +
-        '<div style="color:' + iconColor + '">' + getFileIconSvg(cat, ext) + '</div>' +
-        '</div>';
-    }
+    var iconColor = cat === 'image' ? '#1e8e3e' : cat === 'video' ? '#d93025' : cat === 'audio' ? '#a142f4' : getExtColor(ext);
+    var iconHtml = thumbCell(
+      file, cat, ext,
+      'aspect-square rounded-control overflow-hidden bg-paper border border-cloud flex items-center justify-center',
+      iconColor
+    );
 
     // Checkbox (bulk mode)
     var checkboxHtml = state.isBulkMode ?
       '<div class="absolute top-2 left-2 z-10">' +
-      '<div class="w-5 h-5 rounded flex items-center justify-center transition" style="background:' + (isSelected ? 'rgb(var(--c-primary))' : 'rgb(var(--c-surface))') + ';border:2px solid ' + (isSelected ? 'rgb(var(--c-primary))' : 'rgb(var(--c-border))') + '">' +
+      '<div class="w-5 h-5 rounded flex items-center justify-center transition" style="background:' + (isSelected ? 'rgb(var(--c-accent))' : 'rgb(var(--c-surface))') + ';border:2px solid ' + (isSelected ? 'rgb(var(--c-accent))' : 'rgb(var(--c-border))') + '">' +
       (isSelected ? '<svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" class="w-3 h-3"><polyline points="20 6 9 17 4 12"/></svg>' : '') +
       '</div></div>' : '';
 
@@ -446,8 +599,8 @@ function renderList(container) {
 
     var isSelected = state.selectedIds.has(file.file_key);
     if (isSelected) {
-      row.style.background = 'rgb(var(--c-primary) / 0.06)';
-      row.style.borderLeft = '2px solid rgb(var(--c-primary))';
+      row.style.background = 'rgb(var(--c-accent) / 0.08)';
+      row.style.borderLeft = '2px solid rgb(var(--c-accent))';
     }
 
     var cat = getFileCategory(file);
@@ -455,13 +608,15 @@ function renderList(container) {
     var iconColor = cat === 'image' ? '#1e8e3e' : cat === 'video' ? '#d93025' : cat === 'audio' ? '#a142f4' : getExtColor(ext);
 
     var checkboxHtml = state.isBulkMode ?
-      '<div class="w-5 h-5 rounded flex items-center justify-center shrink-0 transition" style="background:' + (isSelected ? 'rgb(var(--c-primary))' : 'transparent') + ';border:2px solid ' + (isSelected ? 'rgb(var(--c-primary))' : 'rgb(var(--c-border))') + '">' +
+      '<div class="w-5 h-5 rounded flex items-center justify-center shrink-0 transition" style="background:' + (isSelected ? 'rgb(var(--c-accent))' : 'transparent') + ';border:2px solid ' + (isSelected ? 'rgb(var(--c-accent))' : 'rgb(var(--c-border))') + '">' +
       (isSelected ? '<svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" class="w-3 h-3"><polyline points="20 6 9 17 4 12"/></svg>' : '') +
       '</div>' : '';
 
-    var iconHtml = file.telegram_thumb_id ?
-      '<div class="w-10 h-10 rounded-control overflow-hidden bg-paper border border-cloud shrink-0"><img src="/api/thumb/' + file.file_key + '" class="w-full h-full object-cover" alt="" loading="lazy"></div>' :
-      '<div class="w-10 h-10 rounded-control bg-paper border border-cloud flex items-center justify-center shrink-0" style="color:' + iconColor + '">' + getFileIconSvg(cat, ext) + '</div>';
+    var iconHtml = thumbCell(
+      file, cat, ext,
+      'w-10 h-10 rounded-control overflow-hidden bg-paper border border-cloud shrink-0 flex items-center justify-center',
+      iconColor
+    );
 
     var name = escapeHtml(file.filename || file.name || 'Unnamed');
     var size = formatBytes(file.total_size || file.size);
@@ -589,139 +744,366 @@ function hideContextMenu() {
 }
 
 /* ─────────────────────────────────────────────────────────────
-   LIGHTBOX
+   PREVIEW VIEWER
+   ----------------------------------------------------------------
+   Two things were wrong with the version this replaces, and both show up as
+   "unstable" rather than as an error.
+
+   1. No load generation. Every surface installed an onload/onerror or started a
+      fetch and then trusted it. Holding → through twenty photos left twenty
+      in-flight loads racing, and whichever finished last won — so the pane
+      routinely ended up showing a file you had already navigated past, or a
+      spinner that never cleared because the *stale* load was the one that
+      hid it. pvToken makes every continuation check that it is still the
+      current one before touching the DOM.
+
+   2. It decided what it could show, then acted as though it were right. `mkv`
+      and `avi` are category video, so they went to a <video> element that no
+      browser can decode, and the result was a black rectangle with controls.
+      Now every media surface has an error path that falls through to the
+      download plate with a reason, so a failure explains itself.
+
+   Navigation covers the whole filtered list, the way Drive does — the old list
+   was pre-filtered to image/video/audio, so arrowing through a mixed folder
+   silently skipped everything else.
    ───────────────────────────────────────────────────────────── */
-function openLightboxByFile(file) {
+
+// Text-ish extensions. The server declares all of these text/plain and the
+// bounded /api/text route reads only the head of the file, so a log is safe to
+// open; PV_TEXT_MAX_BYTES is the second guard, because the *original* still has
+// to come down from Telegram in full before the head can be read.
+var PV_TEXT_EXTS = [
+  'txt','log','md','markdown','csv','tsv','json','xml','yml','yaml','toml',
+  'ini','cfg','conf','env','srt','vtt','html','htm','xhtml','css','js','mjs',
+  'cjs','jsx','ts','tsx','py','rb','php','java','c','h','cpp','hpp','cs','go',
+  'rs','kt','swift','sh','bat','ps1','sql','dockerfile','gitignore','properties'
+];
+var PV_TEXT_MAX_BYTES = 5 * 1024 * 1024;
+// Below this the full image arrives about as fast as its thumbnail, and a small
+// original would be shown larger as a placeholder than it is as itself.
+var PV_BLUR_MIN_BYTES = 512 * 1024;
+
+// Bumped on every load. A continuation whose token no longer matches has been
+// superseded and must not touch the DOM.
+var pvToken = 0;
+var pvAbort = null;
+var pvZoom = 1;
+var PV_ZOOM_STEPS = [1, 1.25, 1.5, 2, 3, 4];
+
+var PV_SURFACES = ['lb-img', 'lb-video', 'lb-pdf', 'lb-text-wrap', 'lb-audio-container', 'lb-nopreview'];
+
+function previewKind(file) {
+  var ext = getFileExt(file.filename || file.name || '');
   var cat = getFileCategory(file);
-  if (cat === 'document' || cat === 'folder') {
-    var ext = getFileExt(file.filename || file.name || '');
-    if (ext === 'pdf' || ext === 'txt' || ext === 'md' || ext === 'json') {
-      openLightbox(file);
-    } else {
-      window.open('/api/download/' + file.file_key, '_blank');
-    }
-  } else {
-    openLightbox(file);
+  if (ext === 'pdf') return 'pdf';
+  if (cat === 'image') return 'image';
+  if (cat === 'video') return 'video';
+  if (cat === 'audio') return 'audio';
+  if (PV_TEXT_EXTS.indexOf(ext) >= 0) {
+    return (Number(file.total_size || file.size) || 0) > PV_TEXT_MAX_BYTES ? 'none' : 'text';
   }
+  return 'none';
+}
+
+// Shows exactly one surface and hides the rest, so no combination of fast
+// navigation can leave two stacked on top of each other.
+function showPreviewSurface(id) {
+  PV_SURFACES.forEach(function (s) {
+    var el = $(s);
+    if (el) el.classList.toggle('hidden', s !== id);
+  });
+  $('lb-loading').classList.toggle('hidden', !!id);
+  $('lb-zoom').classList.toggle('show', id === 'lb-img');
+}
+
+// The download plate, used both for "we cannot render this type" and for "we
+// tried and the browser refused the codec".
+function showPreviewFallback(file, title, sub) {
+  var ext = getFileExt(file.filename || file.name || '');
+  var cat = getFileCategory(file);
+  $('lb-empty-icon').innerHTML = getFileIconSvg(cat, ext);
+  $('lb-empty-title').textContent = title || 'Pratinjau tidak tersedia';
+  $('lb-empty-sub').textContent = sub || 'Unduh berkas untuk membukanya secara lokal';
+  $('lb-empty-download').href = '/api/download/' + file.file_key;
+  showPreviewSurface('lb-nopreview');
+}
+
+/* ZOOM — the image is given an explicit pixel width and the stage scrolls.
+   A transform + drag handler was the alternative and it is worse: the scroll
+   position is not preserved, the pointer can escape the element mid-drag, and
+   the transformed box does not contribute to the scrollable area, so the top of
+   a zoomed portrait becomes unreachable. */
+function pvApplyZoom() {
+  var img = $('lb-img');
+  var label = $('lb-zoom-level');
+  if (label) label.textContent = Math.round(pvZoom * 100) + '%';
+  if (!img || img.classList.contains('hidden')) return;
+
+  if (pvZoom <= 1) {
+    img.classList.remove('zoomed');
+    img.style.width = '';
+    img.style.height = '';
+    return;
+  }
+
+  var stage = $('lb-stage');
+  var pad = 32;
+  var availW = Math.max(stage.clientWidth - pad, 80);
+  var availH = Math.max(stage.clientHeight - pad, 80);
+  var nw = img.naturalWidth || availW;
+  var nh = img.naturalHeight || availH;
+  // The zoom is relative to the *fitted* size, not to the file's own pixels, so
+  // 100% means "as large as it was on screen" for a huge photo and for a small
+  // one alike. Never scale a small image up past its own resolution at 100%.
+  var fit = Math.min(availW / nw, availH / nh, 1);
+  img.classList.add('zoomed');
+  img.style.width = Math.round(nw * fit * pvZoom) + 'px';
+  img.style.height = 'auto';
+}
+
+function pvSetZoom(z) {
+  pvZoom = Math.max(PV_ZOOM_STEPS[0], Math.min(PV_ZOOM_STEPS[PV_ZOOM_STEPS.length - 1], z));
+  pvApplyZoom();
+}
+
+function pvZoomStep(dir) {
+  var i = PV_ZOOM_STEPS.indexOf(pvZoom);
+  if (i < 0) {
+    // Landed on a value not in the ladder (a toggle-click): snap to the nearest.
+    i = 0;
+    for (var k = 0; k < PV_ZOOM_STEPS.length; k++) {
+      if (Math.abs(PV_ZOOM_STEPS[k] - pvZoom) < Math.abs(PV_ZOOM_STEPS[i] - pvZoom)) i = k;
+    }
+  }
+  pvSetZoom(PV_ZOOM_STEPS[Math.max(0, Math.min(PV_ZOOM_STEPS.length - 1, i + dir))]);
+}
+
+/* ENTRY POINTS */
+
+// Every file opens the viewer now. Previously an unsupported type triggered a
+// download the moment you clicked its card, which is a surprising amount of
+// traffic for a mis-click; the plate offers the download instead of performing
+// it, and keeps the arrow keys working through the rest of the list.
+function openLightboxByFile(file) {
+  openLightbox(file);
 }
 
 function openLightbox(file) {
   var lb = $('lightbox');
   lb.classList.remove('hidden');
-  lb.classList.add('active');
+  // The opacity transition needs the element to be laid out at opacity 0 for one
+  // frame before .active lands, or it snaps in without the fade.
+  requestAnimationFrame(function () { lb.classList.add('active'); });
+  document.body.style.overflow = 'hidden';
 
-  state.lightboxList = state.filteredFiles.filter(function (f) {
-    var c = getFileCategory(f);
-    return c === 'image' || c === 'video' || c === 'audio';
-  });
+  state.lightboxList = (state.filteredFiles || []).slice();
   state.lightboxIndex = state.lightboxList.findIndex(function (f) { return f.file_key === file.file_key; });
-
-  loadLightboxContent(file);
-
-  var prevBtn = $('lb-prev');
-  var nextBtn = $('lb-next');
-  if (state.lightboxList.length > 1) {
-    prevBtn.classList.remove('hidden');
-    nextBtn.classList.remove('hidden');
-  } else {
-    prevBtn.classList.add('hidden');
-    nextBtn.classList.add('hidden');
+  if (state.lightboxIndex < 0) {
+    state.lightboxList = [file];
+    state.lightboxIndex = 0;
   }
+
+  var many = state.lightboxList.length > 1;
+  $('lb-prev').classList.toggle('hidden', !many);
+  $('lb-next').classList.toggle('hidden', !many);
+
+  loadLightboxContent(state.lightboxList[state.lightboxIndex]);
 }
 
 function loadLightboxContent(file) {
-  $('lb-loading').classList.remove('hidden');
-  ['lb-img','lb-video','lb-pdf','lb-text','lb-audio-container','lb-nopreview'].forEach(function (id) {
-    $(id).classList.add('hidden');
-  });
+  if (!file) return;
+
+  // Invalidate everything still in flight from the previous file.
+  var token = ++pvToken;
+  if (pvAbort) { try { pvAbort.abort(); } catch (e) {} pvAbort = null; }
+  pvResetMedia();
+  pvZoom = 1;
 
   var name = file.filename || file.name || 'Pratinjau';
-  $('lb-title-text').textContent = name;
-  $('lb-name').textContent = name;
-  $('lb-size').textContent = formatBytes(file.total_size || file.size);
-  $('lb-download').href = '/api/download/' + file.file_key;
-
-  var orig = $('lb-download-original');
-  orig.href = '/api/download-original/' + file.file_key;
-  orig.classList.remove('hidden'); // always show; server handles non-split gracefully
-
+  var size = formatBytes(file.total_size || file.size);
   var cat = getFileCategory(file);
-  var ext = getFileExt(file.filename || file.name || '');
+  var ext = getFileExt(name);
+  var kind = previewKind(file);
 
-  if (cat === 'image') {
+  $('lb-title-text').textContent = name;
+  $('lb-title-text').title = name;
+  $('lb-title-icon').innerHTML = getFileIconSvg(cat, ext);
+  $('lb-meta').textContent = size + (ext ? ' · ' + ext.toUpperCase() : '');
+  $('lb-counter').textContent = state.lightboxList.length > 1
+    ? (state.lightboxIndex + 1) + ' / ' + state.lightboxList.length
+    : '';
+  $('lb-download').href = '/api/download/' + file.file_key;
+  $('lb-download-original').href = '/api/download-original/' + file.file_key;
+  $('lb-newtab').href = '/api/preview/' + file.file_key;
+
+  showPreviewSurface(null);
+  $('lb-loading-text').textContent = 'Memuat…';
+
+  if (kind === 'image') {
     var img = $('lb-img');
-    img.onload = function () {
-      $('lb-loading').classList.add('hidden');
-      img.classList.remove('hidden');
+    var bytes = Number(file.total_size || file.size) || 0;
+
+    // Stand the cached thumbnail in, blurred, while the full image downloads —
+    // the same progressive reveal Drive does, and the reason opening a photo
+    // feels immediate instead of showing a spinner over an empty stage. The
+    // thumbnail shares the original's aspect ratio, so .pv-blur sizing it to the
+    // stage lands on the same box the finished image will occupy: no jump.
+    if (bytes >= PV_BLUR_MIN_BYTES) {
+      // A file with no thumbnail 404s here, which is not worth reporting — the
+      // full image is still on its way and owns the error path.
+      img.onload = function () {
+        if (token !== pvToken || !img.classList.contains('pv-blur')) return;
+        showPreviewSurface('lb-img');
+      };
+      img.onerror = null;
+      img.classList.add('pv-blur');
+      img.src = '/api/thumb/' + encodeURIComponent(file.file_key);
+    }
+
+    // Decoded off to the side, then handed over: assigning a src the browser has
+    // already loaded paints from cache in the same frame, so the swap from blur
+    // to sharp never flashes an empty element.
+    var full = new Image();
+    full.onload = function () {
+      if (token !== pvToken) return;
+      img.onload = null;
+      img.onerror = null;
+      img.classList.remove('pv-blur');
+      img.src = full.src;
+      showPreviewSurface('lb-img');
+      pvApplyZoom();
     };
-    img.onerror = function () {
-      $('lb-loading').classList.add('hidden');
-      $('lb-nopreview').classList.remove('hidden');
+    full.onerror = function () {
+      if (token !== pvToken) return;
+      img.classList.remove('pv-blur');
+      showPreviewFallback(file, 'Gambar tidak dapat ditampilkan',
+        'Berkas mungkin rusak atau formatnya tidak didukung browser');
     };
-    img.src = '/api/preview/' + file.file_key;
-  } else if (cat === 'video') {
-    $('lb-loading').classList.add('hidden');
-    var vid = $('lb-video');
-    vid.src = '/api/stream/' + file.file_key;
-    vid.classList.remove('hidden');
-    vid.load();
-    vid.play().catch(function () {});
-  } else if (cat === 'audio') {
-    $('lb-loading').classList.add('hidden');
-    $('lb-audio-title').textContent = name;
-    $('lb-audio-size').textContent = formatBytes(file.total_size || file.size);
-    var aud = $('lb-audio');
-    aud.src = '/api/stream/' + file.file_key;
-    $('lb-audio-container').classList.remove('hidden');
-    aud.load();
-    aud.play().catch(function () {});
-  } else if (ext === 'pdf') {
-    $('lb-loading').classList.add('hidden');
-    var iframe = $('lb-pdf');
-    iframe.src = '/api/preview/' + file.file_key;
-    iframe.classList.remove('hidden');
-  } else if (ext === 'txt' || ext === 'md' || ext === 'json') {
-    $('lb-loading').classList.remove('hidden');
-    fetch('/api/preview/' + file.file_key)
-      .then(function (res) { return res.text(); })
-      .then(function (text) {
-        $('lb-loading').classList.add('hidden');
-        $('lb-text').textContent = text;
-        $('lb-text').classList.remove('hidden');
-      })
-      .catch(function () {
-        $('lb-loading').classList.add('hidden');
-        $('lb-nopreview').classList.remove('hidden');
-      });
-  } else {
-    $('lb-loading').classList.add('hidden');
-    $('lb-nopreview').classList.remove('hidden');
+    full.src = '/api/preview/' + file.file_key;
+    return;
   }
+
+  if (kind === 'video' || kind === 'audio') {
+    var isVideo = kind === 'video';
+    var el = $(isVideo ? 'lb-video' : 'lb-audio');
+    // A container that cannot be decoded (mkv, avi, wmv) reaches `error` rather
+    // than throwing, and it is the only reliable signal — there is no list of
+    // codecs a given browser will accept that stays true for long.
+    el.onerror = function () {
+      if (token !== pvToken) return;
+      showPreviewFallback(file,
+        (isVideo ? 'Video' : 'Audio') + ' ini tidak didukung browser',
+        'Kontainer ' + (ext ? ext.toUpperCase() + ' ' : '') + 'tidak dapat diputar langsung. Unduh untuk memutarnya di pemutar lokal.');
+    };
+    el.onloadeddata = function () { if (token === pvToken) $('lb-loading').classList.add('hidden'); };
+    if (isVideo) {
+      showPreviewSurface('lb-video');
+    } else {
+      $('lb-audio-title').textContent = name;
+      $('lb-audio-size').textContent = size;
+      showPreviewSurface('lb-audio-container');
+      var disc = $('lb-audio-disc');
+      el.onplay = function () { disc.classList.add('playing'); };
+      el.onpause = function () { disc.classList.remove('playing'); };
+    }
+    el.src = '/api/stream/' + file.file_key;
+    el.load();
+    return;
+  }
+
+  if (kind === 'pdf') {
+    var frame = $('lb-pdf');
+    // The frame reports load for an error page just as happily as for a PDF, so
+    // there is nothing to verify here — the browser's own viewer takes over.
+    frame.onload = function () { if (token === pvToken) $('lb-loading').classList.add('hidden'); };
+    frame.src = '/api/preview/' + file.file_key;
+    showPreviewSurface('lb-pdf');
+    return;
+  }
+
+  if (kind === 'text') {
+    $('lb-loading-text').textContent = 'Mengunduh berkas…';
+    pvAbort = typeof AbortController === 'function' ? new AbortController() : null;
+    fetch('/api/text/' + file.file_key, pvAbort ? { signal: pvAbort.signal } : undefined)
+      .then(function (res) {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      })
+      .then(function (data) {
+        if (token !== pvToken) return;
+        $('lb-text').textContent = data.text || '';
+        var note = $('lb-text-note');
+        if (data.truncated) {
+          note.textContent = 'Menampilkan ' + formatBytes(data.bytes) + ' pertama dari ' +
+            formatBytes(data.totalBytes) + '. Unduh berkas untuk melihat seluruhnya.';
+          note.classList.remove('hidden');
+        } else {
+          note.classList.add('hidden');
+        }
+        showPreviewSurface('lb-text-wrap');
+      })
+      .catch(function (err) {
+        if (token !== pvToken || (err && err.name === 'AbortError')) return;
+        showPreviewFallback(file, 'Gagal memuat isi berkas',
+          err && err.message ? err.message : 'Coba unduh berkasnya');
+      });
+    return;
+  }
+
+  showPreviewFallback(file, 'Pratinjau tidak tersedia',
+    ext ? 'Berkas ' + ext.toUpperCase() + ' tidak dapat ditampilkan di browser' : null);
+}
+
+// Detaching src (rather than only pausing) is what stops a half-buffered video
+// from carrying on downloading in the background after you have moved on.
+function pvResetMedia() {
+  ['lb-video', 'lb-audio'].forEach(function (id) {
+    var el = $(id);
+    if (!el) return;
+    el.onerror = el.onloadeddata = el.onplay = el.onpause = null;
+    try { el.pause(); } catch (e) {}
+    el.removeAttribute('src');
+    try { el.load(); } catch (e) {}
+  });
+  var img = $('lb-img');
+  if (img) {
+    img.onload = img.onerror = null;
+    img.removeAttribute('src');
+    img.style.width = '';
+    img.style.height = '';
+    img.classList.remove('zoomed');
+    img.classList.remove('pv-blur');
+  }
+  var frame = $('lb-pdf');
+  if (frame) { frame.onload = null; frame.removeAttribute('src'); }
+  var disc = $('lb-audio-disc');
+  if (disc) disc.classList.remove('playing');
+  var stage = $('lb-stage');
+  if (stage) { stage.scrollTop = 0; stage.scrollLeft = 0; }
 }
 
 function closeLightbox() {
   var lb = $('lightbox');
+  pvToken++;                 // nothing still loading may write to the DOM
+  if (pvAbort) { try { pvAbort.abort(); } catch (e) {} pvAbort = null; }
   lb.classList.remove('active');
+  document.body.style.overflow = '';
   setTimeout(function () {
     lb.classList.add('hidden');
-    var vid = $('lb-video');
-    var aud = $('lb-audio');
-    if (vid) { vid.pause(); vid.removeAttribute('src'); vid.load(); }
-    if (aud) { aud.pause(); aud.removeAttribute('src'); aud.load(); }
-  }, 250);
+    pvResetMedia();
+    showPreviewSurface(null);
+  }, 200);
 }
 
-function lightboxNext() {
-  if (state.lightboxList.length === 0) return;
-  state.lightboxIndex = (state.lightboxIndex + 1) % state.lightboxList.length;
+function lightboxStep(dir) {
+  var n = state.lightboxList.length;
+  if (n === 0) return;
+  state.lightboxIndex = (state.lightboxIndex + dir + n) % n;
   loadLightboxContent(state.lightboxList[state.lightboxIndex]);
 }
 
-function lightboxPrev() {
-  if (state.lightboxList.length === 0) return;
-  state.lightboxIndex = (state.lightboxIndex - 1 + state.lightboxList.length) % state.lightboxList.length;
-  loadLightboxContent(state.lightboxList[state.lightboxIndex]);
-}
+function lightboxNext() { lightboxStep(1); }
+function lightboxPrev() { lightboxStep(-1); }
 
 function lightboxDelete() {
   if (state.lightboxList.length === 0) return;
@@ -729,11 +1111,24 @@ function lightboxDelete() {
   showConfirm('Hapus "' + (file.filename || file.name || 'file') + '"?', function () {
     api('/api/files/' + file.file_key, { method: 'DELETE' })
       .then(function () {
-        showToast('Berkas dihapus');
-        closeLightbox();
+        showToast('Berkas dihapus', 'success');
+        // Stay in the viewer and move to the neighbour, which is what you want
+        // when clearing several files in a row. Closing on the last one.
+        state.lightboxList.splice(state.lightboxIndex, 1);
+        if (state.lightboxList.length === 0) {
+          closeLightbox();
+        } else {
+          if (state.lightboxIndex >= state.lightboxList.length) state.lightboxIndex = 0;
+          var many = state.lightboxList.length > 1;
+          $('lb-prev').classList.toggle('hidden', !many);
+          $('lb-next').classList.toggle('hidden', !many);
+          loadLightboxContent(state.lightboxList[state.lightboxIndex]);
+        }
         loadFiles();
       })
-      .catch(function () { showToast('Gagal menghapus berkas'); });
+      .catch(function (err) {
+        showToast('Gagal menghapus berkas' + (err && err.message ? ': ' + err.message : ''), 'error');
+      });
   }, 'Hapus Berkas');
 }
 
@@ -786,8 +1181,8 @@ function renderUploadItems() {
     div.className = 'up-item';
     div.id = 'up-' + up.id;
 
-    var statusText = up.status === 'done' ? 'Selesai' : up.status === 'error' ? 'Gagal' : up.status === 'uploading' ? formatBytes(up.progress * up.size) + ' / ' + formatBytes(up.size) : 'Menunggu...';
-    var fillColor = up.status === 'error' ? 'rgb(var(--c-danger))' : up.status === 'done' ? 'rgb(var(--c-success))' : 'rgb(var(--c-primary))';
+    var statusText = up.status === 'done' ? 'Selesai' : up.status === 'error' ? (up.error ? 'Gagal: ' + up.error : 'Gagal') : up.status === 'uploading' ? formatBytes(up.progress * up.size) + ' / ' + formatBytes(up.size) : 'Menunggu...';
+    var fillColor = up.status === 'error' ? 'rgb(var(--c-danger))' : up.status === 'done' ? 'rgb(var(--c-success))' : 'rgb(var(--c-accent))';
 
     div.innerHTML =
       '<div class="up-row">' +
@@ -803,8 +1198,8 @@ function renderUploadItems() {
 function updateUploadItem(up) {
   var div = $('up-' + up.id);
   if (!div) return;
-  var statusText = up.status === 'done' ? 'Selesai' : up.status === 'error' ? 'Gagal' : up.status === 'uploading' ? formatBytes(up.progress * up.size) + ' / ' + formatBytes(up.size) : 'Menunggu...';
-  var fillColor = up.status === 'error' ? 'rgb(var(--c-danger))' : up.status === 'done' ? 'rgb(var(--c-success))' : 'rgb(var(--c-primary))';
+  var statusText = up.status === 'done' ? 'Selesai' : up.status === 'error' ? (up.error ? 'Gagal: ' + up.error : 'Gagal') : up.status === 'uploading' ? formatBytes(up.progress * up.size) + ' / ' + formatBytes(up.size) : 'Menunggu...';
+  var fillColor = up.status === 'error' ? 'rgb(var(--c-danger))' : up.status === 'done' ? 'rgb(var(--c-success))' : 'rgb(var(--c-accent))';
 
   var statusEl = div.querySelector('.up-status');
   var fillEl = div.querySelector('.up-fill');
@@ -846,6 +1241,10 @@ function processUploadQueue() {
       next.progress = 1;
     } else {
       next.status = 'error';
+      var reason = '';
+      try { reason = (JSON.parse(xhr.responseText) || {}).error || ''; } catch (e) {}
+      next.error = reason;
+      showToast('Gagal mengunggah ' + next.name + (reason ? ': ' + reason : ''), 'error');
     }
     updateUploadItem(next);
     uploadInProgress = false;
@@ -886,15 +1285,29 @@ function handleSync() {
               icon.classList.remove('animate-spin');
               text.textContent = 'Sync';
               loadFiles();
-              if (s.syncing) showToast('Sync masih berjalan...');
+              if (s.syncing) { showToast('Sync masih berjalan...'); return; }
+              // Report the tally. A silent finish was indistinguishable from a
+              // sync that read nothing, which is how a run that had aborted
+              // half-way still looked like a success.
+              var p = s.progress || {};
+              if (p.aborted) {
+                showToast('Sync berhenti: ' + p.aborted, 'error');
+              } else if (typeof p.scanned === 'number') {
+                showToast(
+                  p.added + ' berkas baru, ' + p.skipped + ' sudah ada' +
+                  (p.errors ? ', ' + p.errors + ' gagal' : '') +
+                  ' (' + p.scanned + ' pesan diperiksa)',
+                  'success'
+                );
+              }
             }
           })
           .catch(function () { clearInterval(pollInterval); });
         pollCount++;
       }, 2000);
     })
-    .catch(function () {
-      showToast('Sync gagal');
+    .catch(function (err) {
+      showToast('Sync gagal: ' + (err && err.message ? err.message : 'kesalahan tak terduga'), 'error');
       icon.classList.remove('animate-spin');
       text.textContent = 'Sync';
     });
@@ -1005,6 +1418,22 @@ function logoutSession() {
   }, 'Keluar Sesi');
 }
 
+/* Deliberately separate from Reset Drive: that one deletes files, this one only
+   forgets the app registration. The Telegram session cannot outlive the
+   credentials it was issued under, so the wizard is where this lands. */
+function resetApiCredentials() {
+  showConfirm('Hapus API ID dan API Hash yang tersimpan? Sesi Telegram saat ini berakhir dan Anda perlu memasukkan kredensial lagi dari my.telegram.org. Berkas tidak dihapus.', function () {
+    api('/api/settings/reset-credentials', { method: 'POST' })
+      .then(function () {
+        showToast('Kredensial API direset');
+        state.setupNeeded = true;
+        closeSettings();
+        showSetupWizard();
+      })
+      .catch(function () { showToast('Gagal mereset kredensial'); });
+  }, 'Reset Kredensial API');
+}
+
 function resetDrive() {
   showConfirm('Reset drive? Semua berkas dan pengaturan akan dihapus permanen. Tindakan ini tidak dapat dibatalkan.', function () {
     api('/api/reset', { method: 'POST' })
@@ -1019,31 +1448,55 @@ function resetDrive() {
 /* ─────────────────────────────────────────────────────────────
    THEME
    ───────────────────────────────────────────────────────────── */
+// Must match the .theme-anim duration in base.css: the class is removed a hair
+// after the transition it enables has finished, so it is never left switched on.
+var THEME_ANIM_MS = 460;
+var themeAnimTimer = null;
+var themeSpinTimer = null;
+
+// The colour tokens live on <html>, so swapping the class is the whole theme
+// change — one style recalculation, and .theme-anim turns that recalculation
+// into a crossfade across every element instead of an instant repaint.
 function toggleTheme() {
   var html = document.documentElement;
-  if (html.classList.contains('dark')) {
-    html.classList.remove('dark');
-    state.theme = 'light';
-    localStorage.setItem('drive-theme', 'light');
-    $('ic-sun').classList.remove('hidden');
-    $('ic-moon').classList.add('hidden');
-  } else {
-    html.classList.add('dark');
-    state.theme = 'dark';
-    localStorage.setItem('drive-theme', 'dark');
-    $('ic-sun').classList.add('hidden');
-    $('ic-moon').classList.remove('hidden');
+  var toDark = !html.classList.contains('dark');
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  if (!reduce) {
+    html.classList.add('theme-anim');
+    clearTimeout(themeAnimTimer);
+    themeAnimTimer = setTimeout(function () { html.classList.remove('theme-anim'); }, THEME_ANIM_MS);
+
+    var btn = $('btn-theme');
+    if (btn) {
+      // Restarting the animation needs the class gone for a frame, or a second
+      // click within the duration does nothing at all.
+      btn.classList.remove('theme-spin');
+      void btn.offsetWidth;
+      btn.classList.add('theme-spin');
+      clearTimeout(themeSpinTimer);
+      themeSpinTimer = setTimeout(function () { btn.classList.remove('theme-spin'); }, THEME_ANIM_MS);
+    }
   }
+
+  html.classList.toggle('dark', toDark);
+  state.theme = toDark ? 'dark' : 'light';
+  localStorage.setItem('drive-theme', state.theme);
+  applyThemeUI();
+}
+
+// Keeps the browser's own chrome (the mobile address bar, the tab strip on some
+// desktop builds) in step with the page instead of staying dark under a light UI.
+function applyThemeColorMeta() {
+  var meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', state.theme === 'dark' ? '#171717' : '#f7f7f8');
 }
 
 function applyThemeUI() {
-  if (state.theme === 'dark') {
-    $('ic-sun').classList.add('hidden');
-    $('ic-moon').classList.remove('hidden');
-  } else {
-    $('ic-sun').classList.remove('hidden');
-    $('ic-moon').classList.add('hidden');
-  }
+  var dark = state.theme === 'dark';
+  $('ic-sun').classList.toggle('hidden', dark);
+  $('ic-moon').classList.toggle('hidden', !dark);
+  applyThemeColorMeta();
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -1207,8 +1660,10 @@ function updateStorageInfo() {
 
   var usedEl = $('storage-used');
   var fillEl = $('storage-fill');
+  var pctEl = $('storage-percent');
   if (usedEl) usedEl.textContent = formatBytes(totalSize);
   if (fillEl) fillEl.style.width = percent + '%';
+  if (pctEl) pctEl.textContent = (percent < 1 && percent > 0 ? percent.toFixed(1) : Math.round(percent)) + '%';
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -1270,6 +1725,7 @@ function bindEvents() {
   $('btn-back-step1').addEventListener('click', function () {
     $('setup-form-step2').classList.add('hidden');
     $('setup-form-step1').classList.remove('hidden');
+    setWizardStep(1);
   });
 
   // Navigation
@@ -1278,6 +1734,15 @@ function bindEvents() {
       setCategory(btn.dataset.category);
     });
   });
+
+  // Reload the current listing
+  var refreshBtn = $('btn-refresh');
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', function () {
+      if (state.activeCategory === 'logs') loadLogs();
+      else loadFiles();
+    });
+  }
 
   // Search
   $('search-input').addEventListener('input', handleSearch);
@@ -1338,6 +1803,7 @@ function bindEvents() {
   $('btn-lock').addEventListener('click', lockDrive);
   $('btn-logout').addEventListener('click', logoutSession);
   $('btn-reset-drive').addEventListener('click', resetDrive);
+  $('btn-reset-creds').addEventListener('click', resetApiCredentials);
 
   // Confirm modal
   $('confirm-close').addEventListener('click', function () {
@@ -1369,13 +1835,30 @@ function bindEvents() {
     hideContextMenu();
   });
 
-  // Lightbox
+  // Preview viewer
   $('lb-close').addEventListener('click', closeLightbox);
-  $('lb-prev').addEventListener('click', lightboxPrev);
-  $('lb-next').addEventListener('click', lightboxNext);
+  $('lb-prev').addEventListener('click', function (e) { e.stopPropagation(); lightboxPrev(); });
+  $('lb-next').addEventListener('click', function (e) { e.stopPropagation(); lightboxNext(); });
   $('lb-delete').addEventListener('click', lightboxDelete);
-  $('lightbox').addEventListener('click', function (e) {
-    if (e.target === $('lightbox')) closeLightbox();
+  $('lb-zoom-in').addEventListener('click', function () { pvZoomStep(1); });
+  $('lb-zoom-out').addEventListener('click', function () { pvZoomStep(-1); });
+
+  // Click the image to toggle between fit and 2×, the way Drive does. Clicking
+  // the empty stage around it closes — but only the stage itself, so a click
+  // landing on a control or on the file never dismisses the viewer.
+  $('lb-img').addEventListener('click', function (e) {
+    e.stopPropagation();
+    if (this.classList.contains('pv-blur')) return;
+    pvSetZoom(pvZoom > 1 ? 1 : 2);
+  });
+  $('lb-stage').addEventListener('click', function (e) {
+    if (e.target === $('lb-stage') || e.target === $('lb-fit')) closeLightbox();
+  });
+
+  // A zoomed image is sized in pixels against the stage, so the stage changing
+  // size has to recompute it or the zoom drifts away from what the label says.
+  window.addEventListener('resize', function () {
+    if ($('lightbox').classList.contains('active')) pvApplyZoom();
   });
 
   // Bulk bar
@@ -1409,6 +1892,9 @@ function bindEvents() {
     if ($('lightbox').classList.contains('active')) {
       if (e.key === 'ArrowLeft') lightboxPrev();
       if (e.key === 'ArrowRight') lightboxNext();
+      if (e.key === '+' || e.key === '=') pvZoomStep(1);
+      if (e.key === '-' || e.key === '_') pvZoomStep(-1);
+      if (e.key === '0') pvSetZoom(1);
     }
 
     if ((e.ctrlKey || e.metaKey) && e.key === 'a' && state.filteredFiles.length > 0) {
@@ -1440,19 +1926,15 @@ function init() {
         checkConnection();
         setInterval(checkConnection, 30000);
       } else {
-        // Check if setup is needed (public endpoint — no auth required)
+        // Not signed in. The password gate comes first either way: every setup
+        // endpoint except /api/settings/status is behind requireAuth, so
+        // opening the wizard here would only produce a 401 on the first submit.
+        // The status probe still runs, so a successful login knows whether to
+        // land on the wizard or the dashboard.
+        showLoginGate();
         api('/api/settings/status')
-          .then(function (s) {
-            if (!s.configured) {
-              state.setupNeeded = true;
-              showSetupWizard();
-            } else {
-              showLoginGate();
-            }
-          })
-          .catch(function () {
-            showLoginGate();
-          });
+          .then(function (s) { state.setupNeeded = !s.configured; })
+          .catch(function () { /* gate is already up; treat as configured */ });
       }
     })
     .catch(function () {
