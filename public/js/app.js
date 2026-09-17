@@ -73,9 +73,14 @@ function getFileCategory(file) {
   if (file.category === 'folder') return 'folder';
   var ext = getFileExt(file.filename || file.name || '');
   var mime = file.mime_type || '';
-  if (['jpg','jpeg','png','gif','webp','svg','bmp','ico','tiff','tif','heic','heif','avif'].indexOf(ext) >= 0 || mime.indexOf('image/') === 0) return 'image';
-  if (['mp4','mkv','avi','mov','webm','flv','wmv','m4v','mpg','mpeg'].indexOf(ext) >= 0 || mime.indexOf('video/') === 0) return 'video';
-  if (['mp3','wav','flac','aac','ogg','m4a','opus'].indexOf(ext) >= 0 || mime.indexOf('audio/') === 0) return 'audio';
+  // MIME diperiksa lebih dulu: sebagian berkas tidak punya ekstensi sama sekali,
+  // dan menebak dari nama saja akan menaruh foto ke dalam Dokumen.
+  if (mime.indexOf('image/') === 0) return 'image';
+  if (mime.indexOf('video/') === 0) return 'video';
+  if (mime.indexOf('audio/') === 0) return 'audio';
+  if (['jpg','jpeg','png','gif','webp','svg','bmp','ico','tiff','tif','heic','heif','avif'].indexOf(ext) >= 0) return 'image';
+  if (['mp4','mkv','avi','mov','webm','flv','wmv','m4v','mpg','mpeg','3gp','ts'].indexOf(ext) >= 0) return 'video';
+  if (['mp3','wav','flac','aac','ogg','m4a','opus'].indexOf(ext) >= 0) return 'audio';
   return 'document';
 }
 
@@ -102,8 +107,9 @@ var IMAGE_EXT_ALWAYS_THUMB = ['jpg','jpeg','png','gif','webp','bmp','heic','heif
 function shouldTryThumb(file, cat) {
   if (file.telegram_thumb_id) return true;
   if (cat === 'video') return true;
-  if (cat === 'image') return IMAGE_EXT_ALWAYS_THUMB.indexOf(getFileExt(file.filename || file.name || '')) >= 0
-    || (file.mime_type || '').indexOf('image/') === 0;
+  if (cat === 'image') return true;
+  // PDF dirender halaman pertamanya oleh server, jadi kartunya punya isi yang
+  // bisa dikenali alih-alih ikon generik.
   return THUMB_DOC_EXTS.indexOf(getFileExt(file.filename || file.name || '')) >= 0;
 }
 
@@ -529,7 +535,10 @@ function renderFiles() {
   container.classList.remove('hidden');
   container.innerHTML = '';
   container.className = state.layout === 'grid'
-    ? 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3'
+    // Dua kolom di HP terkecil, lalu bertambah seiring lebar layar. Batasnya
+    // ditulis eksplisit supaya tidak bergantung pada urutan kelas Tailwind yang
+    // kebetulan dihasilkan — itu yang dulu membuat kolom desktop muncul di HP.
+    ? 'grid gap-2 sm:gap-3 grid-cols-2 min-[430px]:grid-cols-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6'
     : 'flex flex-col gap-1';
 
   var countEl = $('file-count-badge');

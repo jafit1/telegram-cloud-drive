@@ -158,6 +158,21 @@
       inset -1px 0 0 0 rgb(255 255 255 / 0.02);
   }
 }
+
+/* ─────────────────────────────────────────────────────────────
+   TINGGI LAYAR DI HP
+   `100vh` di browser seluler mengukur tinggi viewport TERBESAR, jadi kolom
+   yang memakainya selalu lebih tinggi dari layar dan bilah alamat menutupi
+   bagian bawah daftar. `100dvh` mengikuti tinggi yang benar-benar terlihat dan
+   sudah didukung semua browser seluler modern; `100vh` tetap ditulis lebih dulu
+   sebagai cadangan untuk yang belum mengenalnya.
+   ───────────────────────────────────────────────────────────── */
+@supports (height: 100dvh) {
+  @media (min-width: 768px) {
+    #app-shell { height: 100dvh; }
+  }
+  #sidebar, main { max-height: 100dvh; }
+}
 #sidebar-backdrop {
   position: fixed; inset: 0; z-index: 45;
   background: rgb(9 9 11 / 0.5);

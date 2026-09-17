@@ -418,12 +418,19 @@ function maskApiHash(hash) {
 // ============================================================
 function getCategory(filename, mimeType) {
   const ext = path.extname(filename).toLowerCase().replace('.', '');
+  const mime = String(mimeType || '');
+  // MIME didahulukan: berkas tanpa ekstensi tetap punya mimeType dari Telegram,
+  // dan tanpa ini fotonya berakhir di Dokumen lalu tidak pernah dibuatkan
+  // pratinjau.
+  if (mime.startsWith('image/')) return 'image';
+  if (mime.startsWith('video/')) return 'video';
+  if (mime.startsWith('audio/')) return 'audio';
   const imageExts = ['jpg','jpeg','png','gif','bmp','webp','svg','tiff','tif','ico','heic','heif','avif'];
   const videoExts = ['mp4','mkv','avi','mov','webm','wmv','flv','3gp','m4v','ts','mpg','mpeg','m2ts'];
   const audioExts = ['mp3','wav','ogg','m4a','flac','aac','wma','opus'];
-  if (mimeType.startsWith('image/') || imageExts.includes(ext)) return 'image';
-  if (mimeType.startsWith('video/') || videoExts.includes(ext)) return 'video';
-  if (mimeType.startsWith('audio/') || audioExts.includes(ext)) return 'audio';
+  if (imageExts.includes(ext)) return 'image';
+  if (videoExts.includes(ext)) return 'video';
+  if (audioExts.includes(ext)) return 'audio';
   return 'document';
 }
 
@@ -876,6 +883,110 @@ function ffmpegThumb(buffer, seconds = 1, hintExt = '.mp4') {
 // menghabiskan kuota dan waktu yang tidak sepadan. Di atas batas ini, thumbnail
 // Telegram dipakai kalau ada; kalau tidak, kartunya tetap berikon.
 const FFMPEG_MAX_BYTES = Number(process.env.FFMPEG_MAX_BYTES) || 60 * 1024 * 1024;
+
+// Cetak halaman pertama PDF jadi PNG. pdftoppm dari poppler dipakai lebih dulu
+// karena itulah alatnya; ffmpeg cadangan tidak berguna di sini — build Debian
+// tidak membawa demuxer PDF, jadi setiap percobaan berakhir "keluar dengan kode".
+const PDFTOPPM_BIN = process.env.PDFTOPPM_BIN || 'pdftoppm';
+
+function pdfFirstPage(buffer) {
+  return new Promise((resolve, reject) => {
+    const stamp = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const inPath = path.join(require('os').tmpdir(), `pdf_src_${stamp}.pdf`);
+    const outBase = path.join(require('os').tmpdir(), `pdf_out_${stamp}`);
+    try {
+      fs.writeFileSync(inPath, buffer);
+    } catch (e) {
+      return reject(e);
+    }
+    // -f/-l halaman pertama, -png format keluaran, -r 90 cukup untuk kartu.
+    const args = ['-f', '1', '-l', '1', '-r', '90', '-png', inPath, outBase];
+    const proc = spawn(PDFTOPPM_BIN, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const errs = [];
+    let settled = false;
+    const buang = () => {
+      try { fs.unlinkSync(inPath); } catch {}
+      try {
+        for (const f of fs.readdirSync(require('os').tmpdir())) {
+          if (f.startsWith(`pdf_out_${stamp}`)) {
+            try { fs.unlinkSync(path.join(require('os').tmpdir(), f)); } catch {}
+          }
+        }
+      } catch {}
+    };
+    proc.stderr.on('data', (c) => errs.push(c));
+    proc.on('error', (e) => {
+      if (settled) return;
+      settled = true;
+      buang();
+      reject(e);
+    });
+    proc.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      let out = null;
+      try {
+        const files = fs.readdirSync(require('os').tmpdir())
+          .filter((f) => f.startsWith(`pdf_out_${stamp}`) && f.endsWith('.png'))
+          .sort();
+        if (files.length) out = fs.readFileSync(path.join(require('os').tmpdir(), files[0]));
+      } catch (e) {
+        out = null;
+      }
+      buang();
+      if (out && out.length) return resolve(out);
+      reject(new Error(`pdftoppm keluar dengan kode ${code}: ${Buffer.concat(errs).toString().slice(0, 200)}`));
+    });
+  });
+}
+
+// Cetak halaman pertama PDF jadi gambar, lewat ffmpeg (poppler tidak dipasang
+// di image ini, sedangkan ffmpeg membaca PDF sebagai video satu-frame).
+function ffmpegPdfThumb(buffer) {
+  return new Promise((resolve, reject) => {
+    const stamp = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const inPath = path.join(require('os').tmpdir(), `pdf_src_${stamp}.pdf`);
+    const outPath = path.join(require('os').tmpdir(), `pdf_out_${stamp}.png`);
+    try {
+      fs.writeFileSync(inPath, buffer);
+    } catch (e) {
+      return reject(e);
+    }
+    // -frames:v 1 membatasi ke halaman pertama. Skala besar supaya teks judul
+    // masih terbaca di kartu.
+    const args = [
+      '-hide_banner', '-loglevel', 'error',
+      '-i', inPath,
+      '-frames:v', '1',
+      '-vf', 'scale=600:-2:force_original_aspect_ratio=decrease',
+      '-f', 'image2', '-y', outPath,
+    ];
+    const proc = spawn(FFMPEG_BIN, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const errs = [];
+    let settled = false;
+    proc.stderr.on('data', (c) => errs.push(c));
+    proc.on('error', (e) => {
+      if (settled) return;
+      settled = true;
+      try { fs.unlinkSync(inPath); } catch {}
+      reject(e);
+    });
+    proc.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      let out = null;
+      try {
+        if (code === 0 && fs.existsSync(outPath)) out = fs.readFileSync(outPath);
+      } catch (e) {
+        out = null;
+      }
+      try { fs.unlinkSync(inPath); } catch {}
+      try { fs.unlinkSync(outPath); } catch {}
+      if (out && out.length) return resolve(out);
+      reject(new Error(`ffmpeg pdf keluar dengan kode ${code}: ${Buffer.concat(errs).toString().slice(0, 200)}`));
+    });
+  });
+}
 
 async function hasFfmpeg() {
   if (ffmpegAvailable !== null) return ffmpegAvailable;
@@ -1462,7 +1573,12 @@ app.get('/api/uploads', (req, res) => {
       a FLOOD_WAIT. THUMB_CONCURRENCY run at a time and the rest wait for a slot.
    ══════════════════════════════════════════════════════════════════════════ */
 
-const THUMB_AUTO_BYTES = 8 * 1024 * 1024;   // ceiling for shrinking an original
+/* Batas ukuran asli yang masih mau diolah untuk mencari thumbnail. Awalnya
+   8 MB, dan itu membuat foto kamera (11-13 MB) tidak pernah punya pratinjau —
+   kartunya berikon generik padahal berkasnya sehat. 32 MB menampung foto ponsel
+   dan kamera pada umumnya tanpa membuka pintu untuk mengunduh berkas raksasa
+   hanya demi satu gambar. */
+const THUMB_AUTO_BYTES = 32 * 1024 * 1024;
 const THUMB_CONCURRENCY = 4;                // parallel Telegram thumb fetches
 const THUMB_MISS_TTL_MS = 10 * 60 * 1000;   // how long "no thumbnail" is trusted
 const BROWSER_IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.avif', '.bmp']);
@@ -1522,6 +1638,31 @@ function sendNoThumb(res) {
   return res.status(404).end();
 }
 
+// Kenali jenis berkas dari beberapa byte pertama. Dipakai hanya ketika nama
+// berkas dan mimeType sama-sama tidak memberi petunjuk, mis. berkas kiriman
+// Telegram yang tersimpan sebagai application/octet-stream tanpa ekstensi.
+function sniffImageKind(buf) {
+  if (!buf || buf.length < 12) return null;
+  const b = buf;
+  if (b[0] === 0xFF && b[1] === 0xD8 && b[2] === 0xFF) return { exts: ['.jpg'], mime: 'image/jpeg' };
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4E && b[3] === 0x47) return { exts: ['.png'], mime: 'image/png' };
+  if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38) return { exts: ['.gif'], mime: 'image/gif' };
+  const head4 = b.slice(0, 4).toString('latin1');
+  if (head4 === 'RIFF' && b.slice(8, 12).toString('latin1') === 'WEBP') return { exts: ['.webp'], mime: 'image/webp' };
+  if (b.slice(0, 5).toString('latin1') === '%PDF-') return { exts: ['.pdf'], mime: 'application/pdf' };
+  // HEIF/HEIC: kotak 'ftyp' dengan brand heic/heif/mif1 di offset 4.
+  if (b.slice(4, 8).toString('latin1') === 'ftyp') {
+    const brand = b.slice(8, 12).toString('latin1').toLowerCase();
+    if (brand.startsWith('heic') || brand.startsWith('heif') || brand === 'mif1' || brand === 'msf1') {
+      return { exts: ['.heic', '.heif'], mime: 'image/heic' };
+    }
+    if (brand.indexOf('qt') === 0) return { exts: ['.mov'], mime: 'video/quicktime' };
+    return { exts: ['.mp4'], mime: 'video/mp4' };
+  }
+  return null;
+}
+
+// Ukuran berkas yang dilaporkan Telegram sendiri untuk sebuah pesan media.
 app.get('/api/thumb/:fileKey', checkConfig, async (req, res) => {
   const { fileKey } = req.params;
   const generate = req.query.generate === '1';
@@ -1546,13 +1687,20 @@ app.get('/api/thumb/:fileKey', checkConfig, async (req, res) => {
     const VIDEO_EXTS_SET = new Set(['.mp4','.mov','.m4v','.webm','.mkv','.avi','.3gp','.wmv','.flv','.mpg','.mpeg','.ts']);
     const strippedName = file.filename.replace(/\.part\d+$/i, '');
     const realExt = path.extname(strippedName).toLowerCase();
+    /* Sebagian berkas tersimpan tanpa ekstensi sama sekali (nama aslinya
+       memang begitu di Telegram). Kategori dari MIME yang tersimpan di baris
+       itu dipakai sebagai gantinya, supaya fotonya tetap bisa dibuatkan
+       pratinjau alih-alih berhenti sebagai dokumen tak dikenal. */
+    const mimeAwal = String(file.mime_type || '');
     const isImageFile = file.category === 'image' || IMAGE_EXTS_SET.has(realExt);
     const isVideoFile = file.category === 'video' || VIDEO_EXTS_SET.has(realExt);
+    const isPdfFile = realExt === '.pdf' || mimeAwal === 'application/pdf';
     const totalSize = Number(file.total_size) || 0;
     // Video selalu boleh dicoba: thumbnail asli Telegram untuk .mov sering kosong,
-    // dan tanpa frame hasil ffmpeg kartunya hanya menampilkan ikon.
-    const maySharp = !!sharp && (isImageFile || isVideoFile) &&
-      (generate || isVideoFile || (totalSize > 0 && totalSize <= THUMB_AUTO_BYTES));
+    // dan tanpa frame hasil ffmpeg kartunya hanya menampilkan ikon. PDF dibatasi
+    // ukurannya karena ffmpeg harus membaca seluruh berkas untuk halaman pertama.
+    const maySharp = !!sharp && (isImageFile || isVideoFile || isPdfFile) &&
+      (generate || isVideoFile || isPdfFile || isImageFile || (totalSize > 0 && totalSize <= THUMB_AUTO_BYTES));
 
     const nativePath = path.join(thumbDir, `${fileKey}.jpg`);
     const webpPath = path.join(thumbDir, `${fileKey}.webp`);
@@ -1602,6 +1750,26 @@ app.get('/api/thumb/:fileKey', checkConfig, async (req, res) => {
           }
           if (!sourcePath || !fs.existsSync(sourcePath)) return null;
 
+          /* Kalau nama dan mimeType tidak mengenali jenis berkasnya, isi yang
+             menentukan. Berlaku untuk berkas yang datang sebagai
+             application/octet-stream tanpa ekstensi — dan ternyata banyak juga
+             yang berupa foto. */
+          let kind = isPdfFile ? 'pdf' : (isVideoFile ? 'video' : (isImageFile ? 'image' : ''));
+          if (!kind) {
+            let kepala = null;
+            try {
+              const fd = fs.openSync(sourcePath, 'r');
+              const b = Buffer.alloc(16);
+              fs.readSync(fd, b, 0, 16, 0);
+              fs.closeSync(fd);
+              kepala = b;
+            } catch (e) { kepala = null; }
+            const jenis = sniffImageKind(kepala);
+            if (!jenis) return null;
+            kind = jenis.mime === 'application/pdf' ? 'pdf'
+              : (jenis.mime.indexOf('video/') === 0 ? 'video' : 'image');
+          }
+
           /* Video lewat ffmpeg: satu frame pada detik ~1 diubah ke WebP. Ini
              satu-satunya cara .mov HEVC muncul sebagai gambar — browser tidak
              bisa memecahkan codec-nya, dan Sharp hanya menerima gambar.
@@ -1609,7 +1777,7 @@ app.get('/api/thumb/:fileKey', checkConfig, async (req, res) => {
              Dilewati untuk berkas besar: mengunduh puluhan MB demi satu gambar
              tidak sepadan, dan video sebesar itu hampir selalu sudah membawa
              thumbnail Telegram sendiri di langkah di atas. */
-          if (isVideoFile && await hasFfmpeg()) {
+          if (kind === 'video' && await hasFfmpeg()) {
             if (totalSize > FFMPEG_MAX_BYTES) {
               console.log(`Video ${file.filename} (${(totalSize / 1024 / 1024).toFixed(1)} MB) melewati batas frame ffmpeg.`);
               return null;
@@ -1630,11 +1798,43 @@ app.get('/api/thumb/:fileKey', checkConfig, async (req, res) => {
             return webpPath;
           }
 
+          /* PDF: halaman pertama digambar pdftoppm lalu dijadikan WebP. Ditaruh
+             sebelum cabang video karena keduanya memakai biner eksternal tapi
+             alatnya berbeda. */
+          if (kind === 'pdf') {
+            const source = fs.readFileSync(sourcePath);
+            let png = null;
+            try {
+              png = await pdfFirstPage(source);
+            } catch (ePdf) {
+              console.log(`pdftoppm gagal untuk ${file.filename}: ${ePdf.message}`);
+              if (await hasFfmpeg()) {
+                try { png = await ffmpegPdfThumb(source); }
+                catch (e2) { console.log(`ffmpeg PDF juga gagal: ${e2.message}`); }
+              }
+            }
+            if (!png) return null;
+            try {
+              const buf = await sharp(png)
+                .resize(600, 600, { fit: 'inside', withoutEnlargement: true })
+                .webp({ quality: 72 })
+                .toBuffer();
+              fs.writeFileSync(webpPath, buf);
+              db.updateFileThumb(fileKey, 'local_cached');
+              return webpPath;
+            } catch (eSharp) {
+              console.log(`Sharp gagal atas hasil render PDF ${file.filename}: ${eSharp.message}`);
+              return null;
+            }
+          }
+
           const thumbSource = fs.readFileSync(sourcePath);
           /* HEIC/HEIF lewat heif-convert dulu: build sharp di npm tidak memuat
-             plugin HEVC, jadi Sharp akan menolak berkasnya apa adanya. */
+             plugin HEVC, jadi Sharp akan menolak berkasnya apa adanya. Nama
+             berkas dipakai di sini karena hanya itu yang membedakan HEIC dari
+             JPEG pada tahap ini. */
           let source = thumbSource;
-          if (isHeifName(file.filename)) {
+          if (isHeifName(file.filename) || sniffImageKind(thumbSource.slice(0, 16))?.exts?.[0] === '.heic') {
             const png = await decodeHeifToPng(thumbSource, thumbExt);
             if (png) source = png;
           }
@@ -2053,6 +2253,17 @@ async function syncAllFromChannel() {
         let existing;
         try { existing = db.getFile(fileKey); } catch { existing = null; }
         if (existing) {
+          skipped++;
+          continue;
+        }
+
+        /* Pesan yang sama dengan id berbeda (dikirim ulang, atau diunggah dua
+           kali) menghasilkan entri ganda yang isinya identik. Nama + ukuran
+           adalah pasangan yang cukup untuk mengenalinya tanpa membaca isi
+           berkas, dan sudah dipakai jalur unggah. */
+        let kembar = null;
+        try { kembar = db.getFileByNameAndSize(info.filename, info.totalSize); } catch { kembar = null; }
+        if (kembar) {
           skipped++;
           continue;
         }
