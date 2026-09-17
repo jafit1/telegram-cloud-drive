@@ -12,12 +12,61 @@
    ========================================================================== */
 
 /* ─────────────────────────────────────────────────────────────
-   BUTTONS
+   LOADER — tiga batang yang naik-turun
    ----------------------------------------------------------------
-   The primary button is accent-filled so it can never blend into its own
-   border. (An earlier version painted fill and border both with --c-text,
-   which turned invisible in dark mode: white fill under a white label.)
+   Menggantikan cincin berputar di seluruh aplikasi. Ukurannya diatur lewat
+   --ld-h (tinggi batang tengah) dan --ld-w (lebar tiap batang), jadi satu
+   definisi bisa dipakai untuk tombol kecil maupun layar penuh tanpa
+   menduplikasi keyframes.
+
+   Warnanya diambil dari currentColor, sehingga loader di dalam tombol putih
+   otomatis putih dan yang di atas permukaan terang otomatis gelap.
    ───────────────────────────────────────────────────────────── */
+.loader {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--ld-w, 3px) * 1.6);
+  height: var(--ld-h, 20px);
+  line-height: 0;
+}
+.loader .bar {
+  display: inline-block;
+  width: var(--ld-w, 3px);
+  height: calc(var(--ld-h, 20px) * 0.58);
+  border-radius: 10px;
+  background-color: currentColor;
+  opacity: .45;
+  animation: ldScaleUp 1s linear infinite;
+}
+.loader .bar:nth-child(2) {
+  height: var(--ld-h, 20px);
+  animation-delay: .25s;
+}
+.loader .bar:nth-child(3) {
+  animation-delay: .5s;
+}
+
+@keyframes ldScaleUp {
+  20% {
+    opacity: 1;
+    transform: scaleY(1.5);
+  }
+  40% {
+    transform: scaleY(1);
+  }
+}
+
+/* Ukuran siap pakai. Dipakai di tombol, indikator daftar, dan lightbox. */
+.loader-sm { --ld-w: 2.5px; --ld-h: 13px; }
+.loader-md { --ld-w: 3px;   --ld-h: 20px; }
+.loader-lg { --ld-w: 4px;   --ld-h: 30px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .loader .bar { animation-duration: 2.2s; }
+}
+
+
 .btn-primary {
   display: inline-flex; align-items: center; justify-content: center; gap: .5rem;
   background: rgb(var(--c-accent));

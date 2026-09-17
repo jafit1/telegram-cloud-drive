@@ -54,7 +54,7 @@
         <div id="login-error" class="hidden note-error"></div>
         <button type="submit" class="btn-primary w-full py-3">
           <span>Masuk</span>
-          <div class="spin hidden w-4 h-4 border-2 border-white rounded-full animate-spin" style="border-top-color:transparent"></div>
+          <div class="loader loader-sm spin hidden"><span class="bar"></span><span class="bar"></span><span class="bar"></span></div>
         </button>
       </form>
     </div>
@@ -117,7 +117,7 @@
         <div id="step1-error" class="hidden note-error"></div>
         <button type="submit" id="btn-send-otp" class="btn-primary w-full py-3">
           <span>Kirim Kode OTP</span>
-          <div class="spin hidden w-4 h-4 border-2 border-white rounded-full animate-spin" style="border-top-color:transparent"></div>
+          <div class="loader loader-sm spin hidden"><span class="bar"></span><span class="bar"></span><span class="bar"></span></div>
         </button>
       </form>
 
@@ -143,7 +143,7 @@
           <button type="button" id="btn-back-step1" class="btn-ghost flex-1 py-2.5">Kembali</button>
           <button type="submit" id="btn-verify-otp" class="btn-primary flex-1 py-2.5">
             <span>Masuk</span>
-            <div class="spin hidden w-4 h-4 border-2 border-white rounded-full animate-spin" style="border-top-color:transparent"></div>
+            <div class="loader loader-sm spin hidden"><span class="bar"></span><span class="bar"></span><span class="bar"></span></div>
           </button>
         </div>
       </form>
@@ -369,7 +369,7 @@
           <div class="relative flex-1 overflow-y-auto custom-scrollbar p-3 sm:p-4">
             <!-- Loading overlay -->
             <div id="files-loading" class="absolute inset-0 bg-surface/80 flex flex-col items-center justify-center gap-3 hidden z-10">
-              <div class="w-7 h-7 border-2 border-primary rounded-full animate-spin" style="border-top-color:transparent"></div>
+              <div class="loader loader-lg text-primary"><span class="bar"></span><span class="bar"></span><span class="bar"></span></div>
               <p class="text-xs font-mono text-textGray">[ MEMUAT ]</p>
             </div>
 
@@ -498,7 +498,7 @@
             <button type="button" class="btn-ghost flex-1 py-2.5" id="settings-cancel">Batal</button>
             <button type="submit" class="btn-primary flex-1 py-2.5" id="settings-save">
               <span>Simpan</span>
-              <div class="spin hidden w-3.5 h-3.5 border-2 border-white rounded-full animate-spin" style="border-top-color:transparent"></div>
+              <div class="loader loader-sm spin hidden"><span class="bar"></span><span class="bar"></span><span class="bar"></span></div>
             </button>
           </div>
         </div>
@@ -603,7 +603,7 @@
 
       <div class="pv-fit" id="lb-fit">
         <div id="lb-loading" class="pv-loading">
-          <div class="pv-spinner"></div>
+          <div class="loader loader-md pv-loader"><span class="bar"></span><span class="bar"></span><span class="bar"></span></div>
           <p class="pv-loading-text" id="lb-loading-text">Memuat…</p>
         </div>
 

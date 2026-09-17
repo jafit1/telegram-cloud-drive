@@ -1378,8 +1378,25 @@ function handleSync() {
   var btn = $('btn-sync');
   var icon = btn.querySelector('.sync-icon');
   var text = btn.querySelector('.sync-text');
-  icon.classList.add('animate-spin');
+  /* Ikon sync tidak lagi diputar: animasi batang dipakai supaya seluruh
+     aplikasi memakai satu bahasa gerak. Ikonnya disembunyikan, loadernya
+     ditempel di sebelah teks. */
+  if (icon) icon.classList.add('hidden');
+  var loader = btn.querySelector('.sync-loader');
+  if (!loader) {
+    loader = document.createElement('div');
+    loader.className = 'loader loader-sm sync-loader';
+    loader.innerHTML = '<span class="bar"></span><span class="bar"></span><span class="bar"></span>';
+    btn.insertBefore(loader, text);
+  }
+  loader.classList.remove('hidden');
   text.textContent = 'Syncing...';
+
+  function selesaiMuat() {
+    if (icon) icon.classList.remove('hidden');
+    if (loader) loader.classList.add('hidden');
+    text.textContent = 'Sync';
+  }
 
   api('/api/sync', { method: 'POST' })
     .then(function (data) {
@@ -1391,8 +1408,7 @@ function handleSync() {
           .then(function (s) {
             if (!s.syncing || pollCount > 60) {
               clearInterval(pollInterval);
-              icon.classList.remove('animate-spin');
-              text.textContent = 'Sync';
+              selesaiMuat();
               loadFiles();
               if (s.syncing) { showToast('Sync masih berjalan...'); return; }
               // Report the tally. A silent finish was indistinguishable from a
@@ -1417,8 +1433,7 @@ function handleSync() {
     })
     .catch(function (err) {
       showToast('Sync gagal: ' + (err && err.message ? err.message : 'kesalahan tak terduga'), 'error');
-      icon.classList.remove('animate-spin');
-      text.textContent = 'Sync';
+      selesaiMuat();
     });
 }
 

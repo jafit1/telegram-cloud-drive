@@ -552,12 +552,12 @@ body.sidebar-open #sidebar-backdrop { opacity: 1; pointer-events: auto; }
   gap: .875rem;
   color: rgb(255 255 255 / 0.7);
 }
-.pv-spinner {
-  width: 2rem; height: 2rem;
-  border: 2.5px solid rgb(255 255 255 / 0.22);
-  border-top-color: #fff;
-  border-radius: 999px;
-  animation: spin .7s linear infinite;
+/* Loader di lightbox memakai warna terang karena latarnya gelap. Batangnya
+   sudah dari currentColor, jadi cukup dibesarkan sedikit. */
+.pv-loader {
+  --ld-w: 4px;
+  --ld-h: 30px;
+  color: #fff;
 }
 .pv-loading-text { font-size: 11.5px; font-weight: 500; }
 
