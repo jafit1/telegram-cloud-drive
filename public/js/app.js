@@ -1380,13 +1380,16 @@ function handleSync() {
   var text = btn.querySelector('.sync-text');
   /* Ikon sync tidak lagi diputar: animasi batang dipakai supaya seluruh
      aplikasi memakai satu bahasa gerak. Ikonnya disembunyikan, loadernya
-     ditempel di sebelah teks. */
+     ditempel di sebelah teks.
+
+     Versi netral (loader-mono) yang dipakai di sini: tombol Sync sudah berlatar
+     hijau, dan lima rona di atasnya hanya akan terbaca sebagai bercak. */
   if (icon) icon.classList.add('hidden');
   var loader = btn.querySelector('.sync-loader');
   if (!loader) {
     loader = document.createElement('div');
-    loader.className = 'loader loader-sm sync-loader';
-    loader.innerHTML = '<span class="bar"></span><span class="bar"></span><span class="bar"></span>';
+    loader.className = 'loader loader-sm loader-5 loader-mono sync-loader';
+    loader.innerHTML = '<span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="bar"></span>';
     btn.insertBefore(loader, text);
   }
   loader.classList.remove('hidden');

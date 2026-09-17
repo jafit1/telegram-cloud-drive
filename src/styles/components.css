@@ -12,55 +12,85 @@
    ========================================================================== */
 
 /* ─────────────────────────────────────────────────────────────
-   LOADER — tiga batang yang naik-turun
+   LOADER — lima batang berwarna yang naik-turun bergantian
    ----------------------------------------------------------------
    Menggantikan cincin berputar di seluruh aplikasi. Ukurannya diatur lewat
-   --ld-h (tinggi batang tengah) dan --ld-w (lebar tiap batang), jadi satu
-   definisi bisa dipakai untuk tombol kecil maupun layar penuh tanpa
-   menduplikasi keyframes.
+   --ld-h (tinggi batang) dan --ld-w (lebar tiap batang), jadi satu definisi
+   bisa dipakai untuk tombol kecil maupun layar penuh tanpa menduplikasi
+   keyframes.
 
-   Warnanya diambil dari currentColor, sehingga loader di dalam tombol putih
-   otomatis putih dan yang di atas permukaan terang otomatis gelap.
+   Warnanya diambil dari currentColor sehingga loader di dalam tombol putih
+   otomatis putih. Untuk pemakaian berwarna, --ld-warna bisa diisi satu nilai
+   dan tiap batang memakai rona yang berbeda lewat --ld-warna-1..5. Di tempat
+   yang harus tetap netral — tombol, misalnya — warna itu dimatikan dengan
+   .loader-mono.
    ───────────────────────────────────────────────────────────── */
 .loader {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: calc(var(--ld-w, 3px) * 1.6);
+  gap: var(--ld-gap, calc(var(--ld-w, 3px) * 1.8));
   height: var(--ld-h, 20px);
   line-height: 0;
 }
 .loader .bar {
   display: inline-block;
   width: var(--ld-w, 3px);
-  height: calc(var(--ld-h, 20px) * 0.58);
+  height: var(--ld-h, 20px);
   border-radius: 10px;
-  background-color: currentColor;
-  opacity: .45;
-  animation: ldScaleUp 1s linear infinite;
+  background-color: var(--ld-warna-1, currentColor);
+  transform-origin: center;
+  animation: ldScaleUp var(--ld-speed, .9s) ease-in-out infinite;
 }
 .loader .bar:nth-child(2) {
-  height: var(--ld-h, 20px);
-  animation-delay: .25s;
+  background-color: var(--ld-warna-2, currentColor);
+  animation-delay: calc(var(--ld-speed, .9s) * -0.89);
 }
 .loader .bar:nth-child(3) {
-  animation-delay: .5s;
+  background-color: var(--ld-warna-3, currentColor);
+  animation-delay: calc(var(--ld-speed, .9s) * -0.78);
+}
+.loader .bar:nth-child(4) {
+  background-color: var(--ld-warna-4, currentColor);
+  animation-delay: calc(var(--ld-speed, .9s) * -0.67);
+}
+.loader .bar:nth-child(5) {
+  background-color: var(--ld-warna-5, currentColor);
+  animation-delay: calc(var(--ld-speed, .9s) * -0.56);
 }
 
+/* Batang keempat dan kelima hanya muncul pada loader yang memang memasangnya.
+   Loader tiga batang di tombol tidak perlu ikut memanjang. */
+.loader .bar:nth-child(n+4) { display: none; }
+.loader-5 .bar:nth-child(n+4) { display: inline-block; }
+
 @keyframes ldScaleUp {
-  20% {
-    opacity: 1;
-    transform: scaleY(1.5);
+  0%, 40%, 100% {
+    transform: scaleY(0.05);
   }
-  40% {
+  20% {
     transform: scaleY(1);
   }
 }
 
 /* Ukuran siap pakai. Dipakai di tombol, indikator daftar, dan lightbox. */
-.loader-sm { --ld-w: 2.5px; --ld-h: 13px; }
-.loader-md { --ld-w: 3px;   --ld-h: 20px; }
-.loader-lg { --ld-w: 4px;   --ld-h: 30px; }
+.loader-sm { --ld-w: 2.5px; --ld-h: 13px; --ld-gap: 3px; }
+.loader-md { --ld-w: 3px;   --ld-h: 20px; --ld-gap: 4px; }
+.loader-lg { --ld-w: 4px;   --ld-h: 30px; --ld-gap: 6px; }
+
+/* Warna-warni, untuk tempat yang memang boleh berwarna (daftar berkas dan
+   lightbox). Nilai ini yang dipakai loader berukuran besar. */
+.loader-warna {
+  --ld-warna-1: #4c86f9;
+  --ld-warna-2: #49a84c;
+  --ld-warna-3: #f6bb02;
+  --ld-warna-4: #f6bb02;
+  --ld-warna-5: #2196f3;
+}
+
+/* Netral: seluruh batang mengikuti currentColor. Dipakai di dalam tombol, yang
+   latarnya sudah berwarna dan lima rona di atasnya hanya akan terlihat ramai. */
+.loader-mono .bar { background-color: currentColor !important; }
 
 @media (prefers-reduced-motion: reduce) {
   .loader .bar { animation-duration: 2.2s; }
