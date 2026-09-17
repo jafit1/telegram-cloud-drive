@@ -8,6 +8,7 @@ const express = require('express');
 const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
+const { spawn } = require('child_process');
 const { pipeline } = require('stream/promises');
 const { TelegramClient, Api } = require('telegram');
 const { StringSession } = require('telegram/sessions');
@@ -33,6 +34,9 @@ try {
 } catch (err) {
   console.log('Sharp not available — image previews will serve original files. Install sharp for compression.');
 }
+
+// null = belum diperiksa. Diisi sekali saat thumbnail video pertama diminta.
+let ffmpegAvailable = null;
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -414,13 +418,18 @@ function maskApiHash(hash) {
 // ============================================================
 function getCategory(filename, mimeType) {
   const ext = path.extname(filename).toLowerCase().replace('.', '');
-  const imageExts = ['jpg','jpeg','png','gif','bmp','webp','svg','tiff','ico','heic','heif','avif'];
-  const videoExts = ['mp4','mkv','avi','mov','webm','wmv','flv','3gp','m4v','ts'];
+  const imageExts = ['jpg','jpeg','png','gif','bmp','webp','svg','tiff','tif','ico','heic','heif','avif'];
+  const videoExts = ['mp4','mkv','avi','mov','webm','wmv','flv','3gp','m4v','ts','mpg','mpeg','m2ts'];
   const audioExts = ['mp3','wav','ogg','m4a','flac','aac','wma','opus'];
   if (mimeType.startsWith('image/') || imageExts.includes(ext)) return 'image';
   if (mimeType.startsWith('video/') || videoExts.includes(ext)) return 'video';
   if (mimeType.startsWith('audio/') || audioExts.includes(ext)) return 'audio';
   return 'document';
+}
+
+// Ekstensi setelah sufiks .partN dibuang, dalam huruf kecil dan berkode titik.
+function realExtOf(filename) {
+  return path.extname(String(filename || '').replace(/\.part\d+$/i, '')).toLowerCase();
 }
 
 // Picks which of Telegram's own pre-rendered variants to serve as the grid
@@ -748,26 +757,191 @@ async function downloadTelegramThumb(message) {
 
 function generateFileKey() { return Math.random().toString(36).substring(2,15) + Math.random().toString(36).substring(2,15); }
 
-// Image compression function using Sharp
-async function compressImage(inputBuffer, maxDimension = 1920, quality = 80) {
+// Formats Sharp reads on its own. HEIC/HEIF are NOT here: they need libheif,
+// which is present in the image but only reachable when the extension is spelled
+// out to Sharp — hence the heif block below.
+const SHARP_NATIVE_FORMATS = new Set(['jpeg', 'png', 'webp', 'avif', 'tiff', 'gif', 'svg', 'bmp']);
+const HEIF_EXTS = new Set(['.heic', '.heif', '.hif', '.avif']);
+
+function isHeifName(name) {
+  return HEIF_EXTS.has(realExtOf(name));
+}
+
+// Image compression function using Sharp.
+//
+// Every output is WebP, because the point of this path is a *preview* the
+// browser can paint. That matters most for HEIC/HEIF (iPhone photos): Chrome,
+// Firefox and Edge cannot decode them at all, so serving the original — which is
+// what happened whenever Sharp failed — produced an empty viewer.
+//
+// Two routes in, because Sharp alone is not enough here: npm's sharp is built
+// without the HEVC plugin that HEIC needs, so a HEIC goes through heif-convert
+// first and arrives as PNG. `hintName` is the original filename, used only to
+// decide whether that first step is needed.
+async function compressImage(inputBuffer, maxDimension = 1920, quality = 80, hintName = '') {
   if (!sharp) return inputBuffer; // Sharp not available, return original
   try {
     const metadata = await sharp(inputBuffer).metadata();
-    // Only compress if it's a compressible format
+    // SVG and GIF: the first is already tiny and the second is usually animated.
+    // Re-encoding either through the pixel pipeline loses more than it saves.
     if (!metadata.format || ['svg', 'gif'].includes(metadata.format)) {
-      return inputBuffer; // Skip SVG and GIF (animated)
+      return inputBuffer;
     }
-    const result = await sharp(inputBuffer)
+
+    let source = inputBuffer;
+    if (isHeifName(hintName) || !SHARP_NATIVE_FORMATS.has(metadata.format)) {
+      const png = await decodeHeifToPng(inputBuffer, realExtOf(hintName) || '.heic');
+      if (png) source = png;
+    }
+
+    return await sharp(source)
+      .rotate() // honour EXIF orientation before the pixels are thrown away
       .resize(maxDimension, maxDimension, {
         fit: 'inside',
         withoutEnlargement: true
       })
       .webp({ quality, effort: 4 })
       .toBuffer();
-    return result;
   } catch (err) {
     console.error('Image compression error:', err.message);
     return inputBuffer; // Fallback: return original
+  }
+}
+
+/* ffmpeg is the only way to make a picture out of a video the browser will not
+   play. A .mov from an iPhone is HEVC, and HEVC-in-MOV is exactly the case where
+   <video> shows a black box on Chrome and Firefox. Pulling one frame at ~1s to
+   WebP gives the grid and the viewer something visible with no client-side
+   decoder, and the file is fetched once then cached next to the other thumbs.
+
+   Input and output are files on disk, not pipes. `-i pipe:0` looked tidier but
+   failed with a raw OS error (code 3199971767) as soon as the sink could not
+   seek, which mp4 demuxing needs. Writing the already-downloaded buffer to a
+   temp file costs one copy and always works. */
+const FFMPEG_BIN = process.env.FFMPEG_BIN || 'ffmpeg';
+
+function ffmpegThumb(buffer, seconds = 1, hintExt = '.mp4') {
+  return new Promise((resolve, reject) => {
+    const stamp = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const safeExt = /^\.[a-z0-9]{1,5}$/i.test(hintExt) ? hintExt.toLowerCase() : '.mp4';
+    const inPath = path.join(require('os').tmpdir(), `thumb_src_${stamp}${safeExt}`);
+    const outPath = path.join(require('os').tmpdir(), `thumb_out_${stamp}.webp`);
+    try {
+      fs.writeFileSync(inPath, buffer);
+    } catch (e) {
+      return reject(e);
+    }
+
+    const args = [
+      '-hide_banner', '-loglevel', 'error',
+      '-ss', String(seconds),
+      '-i', inPath,
+      '-frames:v', '1',
+      '-vf', 'scale=400:-2:force_original_aspect_ratio=decrease',
+      '-f', 'webp', '-quality', '70',
+      '-y', outPath,
+    ];    const proc = spawn(FFMPEG_BIN, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const errs = [];
+    let settled = false;
+    const bersihkan = () => {
+      try { fs.unlinkSync(inPath); } catch {}
+      try { fs.unlinkSync(outPath); } catch {}
+    };
+    proc.stderr.on('data', (c) => errs.push(c));
+    proc.on('error', (e) => {
+      if (settled) return;
+      settled = true;
+      bersihkan();
+      reject(e);
+    });
+    proc.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      let out = null;
+      try {
+        if (code === 0 && fs.existsSync(outPath)) out = fs.readFileSync(outPath);
+      } catch (e) {
+        out = null;
+      }
+      try { fs.unlinkSync(inPath); } catch {}
+      try { fs.unlinkSync(outPath); } catch {}
+      if (out && out.length) return resolve(out);
+      reject(new Error(`ffmpeg keluar dengan kode ${code}: ${Buffer.concat(errs).toString().slice(0, 200)}`));
+    });
+  });
+}
+
+// Batas ukuran untuk mengambil frame video sendiri. Telepon mengunggah video
+// puluhan MB, dan mengunduh semuanya demi satu gambar membuat satu kartu
+// menghabiskan kuota dan waktu yang tidak sepadan. Di atas batas ini, thumbnail
+// Telegram dipakai kalau ada; kalau tidak, kartunya tetap berikon.
+const FFMPEG_MAX_BYTES = Number(process.env.FFMPEG_MAX_BYTES) || 60 * 1024 * 1024;
+
+async function hasFfmpeg() {
+  if (ffmpegAvailable !== null) return ffmpegAvailable;
+  ffmpegAvailable = await new Promise((resolve) => {
+    const p = spawn(FFMPEG_BIN, ['-version'], { stdio: 'ignore' });
+    p.on('error', () => resolve(false));
+    p.on('close', (code) => resolve(code === 0));
+  });
+  if (!ffmpegAvailable) {
+    console.log('ffmpeg tidak tersedia — thumbnail video akan memakai thumbnail Telegram saja.');
+  }
+  return ffmpegAvailable;
+}
+
+/* Sharp membaca HEIC hanya kalau libvips-nya dibangun dengan plugin HEVC, dan
+   build npm standar tidak. Di image ini `heif-convert` dari libheif-examples
+   selalu ada, jadi HEIC/HEIF dikonversi lewat biner itu dulu, baru hasil PNG-nya
+   diserahkan ke Sharp. Tanpa jalur ini foto iPhone hanya muncul sebagai ikon
+   karena Sharp gagal sebelum sempat membaca pikselnya. */
+const HEIF_CONVERT_BIN = process.env.HEIF_CONVERT_BIN || 'heif-convert';
+
+function heifConvert(buffer, hintExt) {
+  return new Promise((resolve, reject) => {
+    const stamp = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const safeExt = /^\.[a-z0-9]{1,5}$/i.test(hintExt) ? hintExt.toLowerCase() : '.heic';
+    const inPath = path.join(require('os').tmpdir(), `heif_src_${stamp}${safeExt}`);
+    const outPath = path.join(require('os').tmpdir(), `heif_out_${stamp}.png`);
+    try {
+      fs.writeFileSync(inPath, buffer);
+    } catch (e) {
+      return reject(e);
+    }
+    const proc = spawn(HEIF_CONVERT_BIN, [inPath, outPath], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const errs = [];
+    let settled = false;
+    proc.stderr.on('data', (c) => errs.push(c));
+    proc.on('error', (e) => {
+      if (settled) return;
+      settled = true;
+      try { fs.unlinkSync(inPath); } catch {}
+      reject(e);
+    });
+    proc.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      let out = null;
+      try {
+        if (fs.existsSync(outPath)) out = fs.readFileSync(outPath);
+      } catch (e) {
+        out = null;
+      }
+      try { fs.unlinkSync(inPath); } catch {}
+      try { fs.unlinkSync(outPath); } catch {}
+      if (out && out.length) return resolve(out);
+      reject(new Error(`heif-convert keluar dengan kode ${code}: ${Buffer.concat(errs).toString().slice(0, 200)}`));
+    });
+  });
+}
+
+// Ubah HEIC/HEIF apa pun menjadi PNG lewat heif-convert, kalau binernya ada.
+async function decodeHeifToPng(buffer, hintExt) {
+  try {
+    return await heifConvert(buffer, hintExt);
+  } catch (e) {
+    console.log('heif-convert gagal:', e.message);
+    return null;
   }
 }
 
@@ -1369,12 +1543,16 @@ app.get('/api/thumb/:fileKey', checkConfig, async (req, res) => {
     if (!generate && thumbMissedRecently(fileKey)) return sendNoThumb(res);
 
     const IMAGE_EXTS_SET = new Set(['.jpg','.jpeg','.png','.gif','.bmp','.webp','.heic','.heif','.tiff','.tif','.avif']);
+    const VIDEO_EXTS_SET = new Set(['.mp4','.mov','.m4v','.webm','.mkv','.avi','.3gp','.wmv','.flv','.mpg','.mpeg','.ts']);
     const strippedName = file.filename.replace(/\.part\d+$/i, '');
     const realExt = path.extname(strippedName).toLowerCase();
     const isImageFile = file.category === 'image' || IMAGE_EXTS_SET.has(realExt);
+    const isVideoFile = file.category === 'video' || VIDEO_EXTS_SET.has(realExt);
     const totalSize = Number(file.total_size) || 0;
-    const maySharp = !!sharp && isImageFile &&
-      (generate || (totalSize > 0 && totalSize <= THUMB_AUTO_BYTES));
+    // Video selalu boleh dicoba: thumbnail asli Telegram untuk .mov sering kosong,
+    // dan tanpa frame hasil ffmpeg kartunya hanya menampilkan ikon.
+    const maySharp = !!sharp && (isImageFile || isVideoFile) &&
+      (generate || isVideoFile || (totalSize > 0 && totalSize <= THUMB_AUTO_BYTES));
 
     const nativePath = path.join(thumbDir, `${fileKey}.jpg`);
     const webpPath = path.join(thumbDir, `${fileKey}.webp`);
@@ -1398,12 +1576,70 @@ app.get('/api/thumb/:fileKey', checkConfig, async (req, res) => {
 
         if (!maySharp) return null;
 
-        const tmpPath = path.join(require('os').tmpdir(), `thumb_tmp_${fileKey}${ext}`);
+        /* Ekstensi tmp harus diambil dari nama setelah sufiks .partN dibuang dan
+           dalam huruf kecil. Memakai `ext` apa adanya pernah menghasilkan
+           "thumb_tmp_sync_11.part1", dan Sharp menolak berkas dengan akhiran itu
+           sebelum sempat membaca isinya. */
+        const thumbExt = realExtOf(file.filename) || ext || '.bin';
+        const tmpPath = path.join(require('os').tmpdir(), `thumb_tmp_${fileKey}${thumbExt}`);
         try {
           console.log(`Thumbnail from original (${(totalSize / 1024 / 1024).toFixed(1)} MB): ${file.filename}`);
-          await client.downloadMedia(msg.media, { outputFile: tmpPath, workers: 4 });
-          if (!fs.existsSync(tmpPath)) return null;
-          const buf = await sharp(tmpPath)
+
+          /* Berkas besar dipecah jadi .part1, .part2, ... dan satu bagian bukan
+             berkas yang sah: .mov bagian pertama tidak punya moov atom, jadi
+             ffmpeg menolak dengan "moov atom not found" sementara ukurannya
+             tampak wajar. Semua bagian digabung dulu lewat jalur yang sama yang
+             dipakai pratinjau, lalu frame diambil dari hasil gabungannya. */
+          const resolved = await resolveFileParts(fileKey);
+          let sourcePath = null;
+          if (resolved && resolved.isSplit) {
+            sourcePath = await ensureMergedCache(fileKey, resolved.parts, resolved.baseName);
+          } else {
+            let downloaded = await client.downloadMedia(msg.media, { workers: 4 });
+            if (!downloaded || !downloaded.length) return null;
+            fs.writeFileSync(tmpPath, downloaded);
+            sourcePath = tmpPath;
+          }
+          if (!sourcePath || !fs.existsSync(sourcePath)) return null;
+
+          /* Video lewat ffmpeg: satu frame pada detik ~1 diubah ke WebP. Ini
+             satu-satunya cara .mov HEVC muncul sebagai gambar — browser tidak
+             bisa memecahkan codec-nya, dan Sharp hanya menerima gambar.
+
+             Dilewati untuk berkas besar: mengunduh puluhan MB demi satu gambar
+             tidak sepadan, dan video sebesar itu hampir selalu sudah membawa
+             thumbnail Telegram sendiri di langkah di atas. */
+          if (isVideoFile && await hasFfmpeg()) {
+            if (totalSize > FFMPEG_MAX_BYTES) {
+              console.log(`Video ${file.filename} (${(totalSize / 1024 / 1024).toFixed(1)} MB) melewati batas frame ffmpeg.`);
+              return null;
+            }
+            const source = fs.readFileSync(sourcePath);
+            let buf = null;
+            for (const at of [1, 0, 3]) {
+              try {
+                buf = await ffmpegThumb(source, at, thumbExt);
+                break;
+              } catch (e1) {
+                console.log(`ffmpeg gagal di detik ${at}: ${e1.message}`);
+              }
+            }
+            if (!buf) return null;
+            fs.writeFileSync(webpPath, buf);
+            db.updateFileThumb(fileKey, 'local_cached');
+            return webpPath;
+          }
+
+          const thumbSource = fs.readFileSync(sourcePath);
+          /* HEIC/HEIF lewat heif-convert dulu: build sharp di npm tidak memuat
+             plugin HEVC, jadi Sharp akan menolak berkasnya apa adanya. */
+          let source = thumbSource;
+          if (isHeifName(file.filename)) {
+            const png = await decodeHeifToPng(thumbSource, thumbExt);
+            if (png) source = png;
+          }
+
+          const buf = await sharp(source)
             .resize(400, 400, { fit: 'cover', position: 'centre' })
             .webp({ quality: 70 })
             .toBuffer();
@@ -1470,12 +1706,16 @@ app.get('/api/preview/:fileKey', checkConfig, async (req, res) => {
         return res.sendFile(compressedPath);
       }
 
-      // Compress the image with Sharp
+      // Compress the image with Sharp. Ini juga jalur yang membuat HEIC/HEIF
+      // bisa tampil: browser tidak punya decoder-nya, jadi harus keluar sebagai
+      // WebP dari sini — bukan sebagai berkas asli.
       try {
         const originalBuffer = fs.readFileSync(targetPath);
-        const compressedBuffer = await compressImage(originalBuffer, 1920, 80);
-        if (compressedBuffer.length < originalBuffer.length) {
-          // Compressed is smaller — save and serve compressed
+        const compressedBuffer = await compressImage(originalBuffer, 1920, 80, baseName);
+        const isHeif = isHeifName(baseName);
+        if (compressedBuffer.length < originalBuffer.length || isHeif) {
+          // Kompresi menguntungkan, atau ini HEIC yang wajib dikonversi walau
+          // hasilnya sedikit lebih besar.
           fs.writeFileSync(compressedPath, compressedBuffer);
           console.log(`Compressed preview: ${baseName} (${(originalBuffer.length/1024).toFixed(0)}KB → ${(compressedBuffer.length/1024).toFixed(0)}KB)`);
           res.setHeader('Content-Type', 'image/webp');

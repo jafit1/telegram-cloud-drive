@@ -73,7 +73,7 @@ function getFileCategory(file) {
   if (file.category === 'folder') return 'folder';
   var ext = getFileExt(file.filename || file.name || '');
   var mime = file.mime_type || '';
-  if (['jpg','jpeg','png','gif','webp','svg','bmp','ico','tiff'].indexOf(ext) >= 0 || mime.indexOf('image/') === 0) return 'image';
+  if (['jpg','jpeg','png','gif','webp','svg','bmp','ico','tiff','tif','heic','heif','avif'].indexOf(ext) >= 0 || mime.indexOf('image/') === 0) return 'image';
   if (['mp4','mkv','avi','mov','webm','flv','wmv','m4v','mpg','mpeg'].indexOf(ext) >= 0 || mime.indexOf('video/') === 0) return 'video';
   if (['mp3','wav','flac','aac','ogg','m4a','opus'].indexOf(ext) >= 0 || mime.indexOf('audio/') === 0) return 'audio';
   return 'document';
@@ -95,9 +95,15 @@ function getFileCategory(file) {
 // cheap but not free, and the negative cache only helps after the first miss.
 var THUMB_DOC_EXTS = ['pdf'];
 
+// HEIC/HEIF tidak punya thumbnail bawaan yang bisa dirender, jadi kartunya
+// harus tetap meminta /api/thumb — server yang mengubahnya ke WebP.
+var IMAGE_EXT_ALWAYS_THUMB = ['jpg','jpeg','png','gif','webp','bmp','heic','heif','avif','tiff','tif'];
+
 function shouldTryThumb(file, cat) {
   if (file.telegram_thumb_id) return true;
-  if (cat === 'image' || cat === 'video') return true;
+  if (cat === 'video') return true;
+  if (cat === 'image') return IMAGE_EXT_ALWAYS_THUMB.indexOf(getFileExt(file.filename || file.name || '')) >= 0
+    || (file.mime_type || '').indexOf('image/') === 0;
   return THUMB_DOC_EXTS.indexOf(getFileExt(file.filename || file.name || '')) >= 0;
 }
 
@@ -1780,17 +1786,23 @@ function checkConnection() {
 /* ─────────────────────────────────────────────────────────────
    STORAGE INFO
    ───────────────────────────────────────────────────────────── */
+/* Drive ini menumpang Telegram, yang tidak memberi kuota yang bisa dibaca dari
+   sini — menghitung persen terhadap angka karangan (15 GB) hanya menyesatkan.
+   Yang ditampilkan: total terpakai, dan label "Unlimited". Bar tetap ada tapi
+   bergerak logaritmis sebagai indikator aktivitas, bukan batas. */
 function updateStorageInfo() {
   var totalSize = state.files.reduce(function (sum, f) { return sum + (f.total_size || f.size || 0); }, 0);
-  var maxBytes = 15 * 1024 * 1024 * 1024;
-  var percent = Math.min((totalSize / maxBytes) * 100, 100);
+  // 1 TB memetakan ke ~100%: cukup untuk membuat bar bergerak tanpa pernah
+  // menyiratkan ada dinding yang menghadang.
+  var softScale = 1024 * 1024 * 1024 * 1024;
+  var percent = Math.min((Math.log10(totalSize + 1) / Math.log10(softScale + 1)) * 100, 100);
 
   var usedEl = $('storage-used');
   var fillEl = $('storage-fill');
   var pctEl = $('storage-percent');
   if (usedEl) usedEl.textContent = formatBytes(totalSize);
   if (fillEl) fillEl.style.width = percent + '%';
-  if (pctEl) pctEl.textContent = (percent < 1 && percent > 0 ? percent.toFixed(1) : Math.round(percent)) + '%';
+  if (pctEl) pctEl.textContent = '\u221E';
 }
 
 /* ─────────────────────────────────────────────────────────────
