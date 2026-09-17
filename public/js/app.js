@@ -163,7 +163,7 @@ function showToast(msg, kind) {
   var t = $('toast');
   if (!t) return;
   $('toast-msg').textContent = msg;
-  var dot = t.querySelector('span');
+  var dot = $('toast-dot');
   if (dot) {
     dot.style.backgroundColor = kind === 'error' ? 'rgb(var(--c-danger))'
       : kind === 'success' ? 'rgb(var(--c-success))'
@@ -1597,13 +1597,72 @@ function stopTempmailPolling() {
 /* ─────────────────────────────────────────────────────────────
    SETTINGS
    ───────────────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────
+   BRAND — nama dan logo di sidebar
+   ----------------------------------------------------------------
+   Disimpan di localStorage, bukan di server. Keduanya murni tampilan dan hanya
+   berarti bagi peramban yang membukanya; menaruhnya di server berarti satu
+   permintaan jaringan setiap kali halaman dimuat demi dua potong teks.
+   ------------------------------------------------------------- */
+var BRAND_NAME_KEY = 'drive-brand-name';
+var BRAND_LOGO_KEY = 'drive-brand-logo';
+var BRAND_NAME_DEFAULT = 'Drive Uyee';
+
+function terapkanBrand() {
+  var nama = localStorage.getItem(BRAND_NAME_KEY) || BRAND_NAME_DEFAULT;
+  var logo = localStorage.getItem(BRAND_LOGO_KEY) || '';
+
+  var nameEl = $('brand-name');
+  if (nameEl) nameEl.textContent = nama;
+
+  var img = $('brand-logo-img');
+  var icon = $('brand-logo-icon');
+  if (img && icon) {
+    if (logo) {
+      img.setAttribute('src', logo);
+      img.classList.remove('hidden');
+      icon.classList.add('hidden');
+    } else {
+      img.removeAttribute('src');
+      img.classList.add('hidden');
+      icon.classList.remove('hidden');
+    }
+  }
+}
+
+function bacaLogoBerkas(file, cb) {
+  if (!file) return cb('');
+  if (file.size > 2 * 1024 * 1024) {
+    showToast('Logo terlalu besar (maksimal 2 MB).', 'error');
+    return cb(null);
+  }
+  var reader = new FileReader();
+  reader.onload = function () { cb(String(reader.result || '')); };
+  reader.onerror = function () { cb(null); };
+  reader.readAsDataURL(file);
+}
+
 function openSettings() {
   $('settings-modal').classList.remove('hidden');
+  var nameInput = $('s-brand-name');
+  if (nameInput) nameInput.value = localStorage.getItem(BRAND_NAME_KEY) || '';
+  perbaruiPratinjauLogo();
   api('/api/settings')
     .then(function (data) {
       $('s-chatid').value = data.chatId || '';
     })
     .catch(function () {});
+}
+
+function perbaruiPratinjauLogo() {
+  var box = $('s-logo-preview');
+  if (!box) return;
+  var logo = localStorage.getItem(BRAND_LOGO_KEY) || '';
+  if (logo) {
+    box.innerHTML = '<img src="' + logo + '" alt="" class="w-full h-full object-cover">';
+  } else {
+    box.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-5 h-5 text-primary"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
+  }
 }
 
 function closeSettings() {
@@ -1623,6 +1682,17 @@ function saveSettings(e) {
   successEl.classList.add('hidden');
   span.textContent = 'Menyimpan...';
   spin.classList.remove('hidden');
+
+  /* Nama dan logo tidak menunggu server: keduanya berlaku seketika di sidebar,
+     dan menyimpannya lokal berarti permintaan jaringan tidak perlu berhasil
+     lebih dulu sebelum tampilannya berubah. */
+  var nameInput = $('s-brand-name');
+  if (nameInput) {
+    var nama = nameInput.value.trim();
+    if (nama) localStorage.setItem(BRAND_NAME_KEY, nama);
+    else localStorage.removeItem(BRAND_NAME_KEY);
+    terapkanBrand();
+  }
 
   api('/api/settings', { method: 'POST', body: { chatId: chatId } })
     .then(function () {
@@ -1854,9 +1924,10 @@ function setupDragDrop() {
    ───────────────────────────────────────────────────────────── */
 function updateConnectionStatus(status) {
   state.connectionState = status;
-  var dot = document.querySelector('#conn-dot .dot');
-  var text = document.querySelector('#conn-dot span:last-child');
-  if (!dot || !text) return;
+  var wrap = $('conn-dot');
+  var dot = document.querySelector('#conn-dot .conn-dot');
+  var text = $('conn-text');
+  if (!dot) return;
 
   var colors = {
     connected: 'rgb(var(--c-success))',
@@ -1870,7 +1941,10 @@ function updateConnectionStatus(status) {
   };
 
   dot.style.backgroundColor = colors[status] || colors.disconnected;
-  text.textContent = labels[status] || labels.disconnected;
+  // Titiknya hijau saat tersambung; cincin luarnya jadi merah saat tidak, dan
+  // tidak ada animasi di keduanya.
+  if (wrap) wrap.classList.toggle('conn-off', status !== 'connected');
+  if (text) text.textContent = labels[status] || labels.disconnected;
 }
 
 function checkConnection() {
@@ -1929,17 +2003,10 @@ function setCategory(category) {
     applyFilters();
   }
 
-  var titles = {
-    all: 'Drive Saya',
-    image: 'Gambar',
-    video: 'Video',
-    audio: 'Audio',
-    document: 'Dokumen',
-    logs: 'Log Sistem',
-    tempmail: 'Temp Mail',
-  };
-  var titleEl = $('ws-title');
-  if (titleEl) titleEl.textContent = titles[category] || 'Drive Saya';
+  /* Judul kategori tidak lagi ditampilkan: satu-satunya tempat judul itu muncul
+     adalah label di atas daftar berkas, dan nilainya berubah tiap kali menu
+     kategori diklik tanpa memberi keterangan baru — nama berkasnya sudah
+     menjelaskan isinya. Kategori aktif tetap terbaca dari sorotan di sidebar. */
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -2058,6 +2125,31 @@ function bindEvents() {
   $('settings-close').addEventListener('click', closeSettings);
   $('settings-cancel').addEventListener('click', closeSettings);
   $('settings-form').addEventListener('submit', saveSettings);
+
+  // Brand: nama dan logo
+  var pickLogo = $('btn-pick-logo');
+  var logoInput = $('s-brand-logo');
+  if (pickLogo && logoInput) {
+    pickLogo.addEventListener('click', function () { logoInput.click(); });
+    logoInput.addEventListener('change', function (e) {
+      var berkas = e.target.files && e.target.files[0];
+      bacaLogoBerkas(berkas, function (dataUrl) {
+        if (dataUrl === null) return;            // ditolak: pesannya sudah muncul
+        if (dataUrl) localStorage.setItem(BRAND_LOGO_KEY, dataUrl);
+        perbaruiPratinjauLogo();
+        terapkanBrand();
+      });
+      e.target.value = '';
+    });
+  }
+  var clearLogo = $('btn-clear-logo');
+  if (clearLogo) {
+    clearLogo.addEventListener('click', function () {
+      localStorage.removeItem(BRAND_LOGO_KEY);
+      perbaruiPratinjauLogo();
+      terapkanBrand();
+    });
+  }
   $('btn-lock').addEventListener('click', lockDrive);
   $('btn-logout').addEventListener('click', logoutSession);
   $('btn-reset-drive').addEventListener('click', resetDrive);
@@ -2172,6 +2264,9 @@ function bindEvents() {
 function init() {
   applyThemeUI();
   updateLayoutUI();
+  // Nama dan logo dipasang sebelum apa pun tampil, supaya tidak ada kedipan
+  // teks bawaan di sidebar saat halaman dibuka.
+  terapkanBrand();
   bindEvents();
 
   // Check auth status

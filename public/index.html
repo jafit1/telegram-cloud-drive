@@ -179,15 +179,14 @@
       <!-- ─── SIDEBAR ─── -->
       <aside id="sidebar" class="w-72 md:w-64 lg:w-72 shrink-0 flex flex-col gap-3 p-4 md:h-full md:overflow-hidden relative">
 
-        <!-- Brand (desktop) -->
-        <div class="hidden md:flex items-center gap-3 shrink-0">
-          <div class="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center border border-primary/15 shrink-0">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-5 h-5 text-primary"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        <!-- Brand (desktop). Nama dan logo diatur dari Pengaturan; nilai
+             bawaannya teks "Drive Uyee". -->
+        <div class="hidden md:flex items-center justify-center gap-3 shrink-0">
+          <div id="brand-logo-wrap" class="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center border border-primary/15 shrink-0">
+            <svg id="brand-logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-5 h-5 text-primary"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            <img id="brand-logo-img" alt="" class="w-9 h-9 rounded-xl object-cover hidden">
           </div>
-          <div class="overflow-hidden">
-            <h1 class="text-base font-semibold tracking-tight truncate">Drive Uyee</h1>
-            <p class="text-[10px] text-textGray font-medium uppercase tracking-wider truncate">Cloud Platform</p>
-          </div>
+          <h1 id="brand-name" class="text-base font-semibold tracking-tight truncate max-w-[10rem]">Drive Uyee</h1>
         </div>
 
         <!-- Close button (drawer only) -->
@@ -195,10 +194,12 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
 
-        <!-- Connection Status -->
-        <div class="flex items-center gap-2 bg-paper border border-cloud px-3 py-1.5 rounded-control w-max shrink-0" id="conn-dot">
-          <span class="w-2 h-2 rounded-full animate-pulse dot" style="background-color:rgb(var(--c-success))"></span>
-          <span class="text-[10px] font-mono font-semibold tracking-wider text-textGray">TERHUBUNG</span>
+        <!-- Connection Status: satu titik hijau. Teks "TERHUBUNG" dihapus karena
+             titiknya sendiri sudah berarti itu, dan kedipannya hanya menarik
+             mata ke hal yang tidak pernah berubah. -->
+        <div class="flex items-center justify-center gap-2 bg-paper border border-cloud px-3 py-1.5 rounded-control shrink-0" id="conn-dot">
+          <span class="conn-dot" style="background-color:rgb(var(--c-success))" title="Terhubung"></span>
+          <span class="text-[10px] font-mono font-semibold tracking-wider text-textGray" id="conn-text">TERHUBUNG</span>
         </div>
 
         <div class="border-t border-cloud shrink-0"></div>
@@ -225,6 +226,10 @@
           <button class="nav-btn" data-category="document">
             <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
             <span>Dokumen</span>
+          </button>
+          <button class="nav-btn" data-category="folder">
+            <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+            <span>Folder</span>
           </button>
           <button class="nav-btn" data-category="logs">
             <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
@@ -356,14 +361,9 @@
         <!-- File List Area -->
         <div class="card flex-1 relative overflow-hidden flex flex-col">
           <div id="folder-breadcrumb" class="hidden shrink-0 flex items-center gap-1.5 text-xs text-textGray font-mono m-4 mb-0 bg-paper border border-cloud px-3 py-2 rounded-control"></div>
-          <div class="flex items-center justify-between gap-3 mx-4 mt-4 mb-3">
-            <h2 id="ws-title" class="text-base font-semibold tracking-tight border-l-[3px] border-primary pl-2.5">Drive Saya</h2>
-            <button id="btn-refresh" class="btn-soft py-1.5 px-3 text-[11px] uppercase tracking-wider" title="Muat ulang daftar berkas">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-              <span>Muat Ulang</span>
-            </button>
-          </div>
-
+          <!-- Judul kategori dan tombol Muat Ulang dihapus dari sini: judulnya
+               berubah-ubah tiap pindah kategori tanpa memberi informasi baru,
+               dan tombolnya mengulang tarikan otomatis yang sudah berjalan. -->
           <div class="relative flex-1 overflow-y-auto custom-scrollbar p-3 sm:p-4">
             <!-- Loading overlay -->
             <div id="files-loading" class="absolute inset-0 bg-surface/80 flex flex-col items-center justify-center gap-3 hidden z-10">
@@ -475,6 +475,29 @@
       </div>
 
       <form id="settings-form" class="p-6 flex flex-col gap-6">
+        <div class="flex flex-col gap-2">
+          <label for="s-brand-name" class="text-[11px] font-semibold text-textGray uppercase tracking-wider">Nama Drive</label>
+          <input type="text" id="s-brand-name" class="input" maxlength="40" autocomplete="off" placeholder="Drive Uyee">
+          <span class="text-xs text-textGray/60">Tulisan yang tampil di sudut kiri atas.</span>
+        </div>
+
+        <div class="flex flex-col gap-2">
+          <label for="s-brand-logo" class="text-[11px] font-semibold text-textGray uppercase tracking-wider">Logo</label>
+          <div class="flex items-center gap-3">
+            <div id="s-logo-preview" class="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center border border-cloud shrink-0 overflow-hidden">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-5 h-5 text-primary"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            </div>
+            <div class="flex flex-col gap-1.5">
+              <input type="file" id="s-brand-logo" accept="image/png,image/jpeg,image/webp,image/svg+xml" class="hidden">
+              <div class="flex gap-2">
+                <button type="button" class="btn-ghost py-1.5 px-3 text-[11px]" id="btn-pick-logo">Pilih gambar</button>
+                <button type="button" class="btn-ghost py-1.5 px-3 text-[11px]" id="btn-clear-logo">Hapus</button>
+              </div>
+              <span class="text-xs text-textGray/60">PNG, JPG, WebP, atau SVG. Maksimal 2 MB.</span>
+            </div>
+          </div>
+        </div>
+
         <div class="flex flex-col gap-2">
           <label for="s-chatid" class="text-[11px] font-semibold text-textGray uppercase tracking-wider">Storage Chat ID</label>
           <input type="text" id="s-chatid" class="input" required autocomplete="off">
@@ -668,7 +691,7 @@
        TOAST
        ══════════════════════════════════════════════════════════ -->
   <div id="toast" class="fixed bottom-6 left-6 bg-obsidian border border-obsidian text-white px-5 py-3 rounded-control text-xs font-medium shadow-lg z-50 flex items-center gap-3 hidden">
-    <span class="w-2 h-2 rounded-full animate-pulse" style="background-color:rgb(var(--c-accent))"></span>
+    <span id="toast-dot" class="w-2 h-2 rounded-full shrink-0" style="background-color:rgb(var(--c-accent))"></span>
     <span id="toast-msg">Notifikasi</span>
   </div>
 

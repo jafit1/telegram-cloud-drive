@@ -87,6 +87,19 @@
 #upload-panel-header { cursor: pointer; user-select: none; }
 #upload-items { overflow-y: auto; }
 
+/* Titik status sambungan. Warnanya tetap dan tidak berdenyut: keadaan ini
+   jarang berubah, jadi animasinya hanya menarik perhatian tanpa alasan. */
+.conn-dot {
+  width: .5rem;
+  height: .5rem;
+  border-radius: 9999px;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 3px rgb(var(--c-success) / .16);
+}
+#conn-dot.conn-off .conn-dot {
+  box-shadow: 0 0 0 3px rgb(var(--c-danger) / .16);
+}
+
 /* Titik status unggahan. Warna tetap, denyut halus pada opacity saja —
    animate-ping yang lama berdenyut besar dan terbaca seperti kedipan. */
 .up-dot {
