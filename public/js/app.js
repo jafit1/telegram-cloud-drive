@@ -1893,21 +1893,18 @@ function checkConnection() {
    STORAGE INFO
    ───────────────────────────────────────────────────────────── */
 /* Drive ini menumpang Telegram, yang tidak memberi kuota yang bisa dibaca dari
-   sini — menghitung persen terhadap angka karangan (15 GB) hanya menyesatkan.
-   Yang ditampilkan: total terpakai, dan label "Unlimited". Bar tetap ada tapi
-   bergerak logaritmis sebagai indikator aktivitas, bukan batas. */
+   sini. Bar-nya tetap penuh karena ruangnya memang tak terbatas — bukan
+   dihitung terhadap angka karangan seperti 15 GB, yang dulu membuat bar
+   bergerak dan menyiratkan ada dinding yang menghadang. Yang berubah hanya
+   angka total terpakai di sebelah kiri. */
 function updateStorageInfo() {
   var totalSize = state.files.reduce(function (sum, f) { return sum + (f.total_size || f.size || 0); }, 0);
-  // 1 TB memetakan ke ~100%: cukup untuk membuat bar bergerak tanpa pernah
-  // menyiratkan ada dinding yang menghadang.
-  var softScale = 1024 * 1024 * 1024 * 1024;
-  var percent = Math.min((Math.log10(totalSize + 1) / Math.log10(softScale + 1)) * 100, 100);
 
   var usedEl = $('storage-used');
   var fillEl = $('storage-fill');
   var pctEl = $('storage-percent');
   if (usedEl) usedEl.textContent = formatBytes(totalSize);
-  if (fillEl) fillEl.style.width = percent + '%';
+  if (fillEl) fillEl.style.width = '100%';
   if (pctEl) pctEl.textContent = '\u221E';
 }
 
@@ -1938,7 +1935,6 @@ function setCategory(category) {
     video: 'Video',
     audio: 'Audio',
     document: 'Dokumen',
-    folder: 'Folder',
     logs: 'Log Sistem',
     tempmail: 'Temp Mail',
   };
