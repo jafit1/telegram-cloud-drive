@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- Favicon Drive Uyee: ikon unggah yang sama dengan brand di sidebar, jadi
+       tab peramban memakai lambang yang sama dengan yang ada di dalamnya. -->
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2563eb"/>
+      <stop offset="1" stop-color="#1d4ed8"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="url(#g)"/>
+  <g fill="none" stroke="#ffffff" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M46 41v6a5 5 0 0 1-5 5H23a5 5 0 0 1-5-5v-6"/>
+    <polyline points="25,26 32,19 39,26"/>
+    <line x1="32" y1="19" x2="32" y2="41"/>
+  </g>
+</svg>

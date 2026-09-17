@@ -1614,6 +1614,9 @@ function terapkanBrand() {
 
   var nameEl = $('brand-name');
   if (nameEl) nameEl.textContent = nama;
+  // Judul tab ikut nama yang diset, supaya tab-nya mudah dikenali saat banyak
+  // tab terbuka sekaligus.
+  document.title = nama + ' — Telegram Cloud Storage';
 
   var img = $('brand-logo-img');
   var icon = $('brand-logo-icon');
@@ -1628,6 +1631,23 @@ function terapkanBrand() {
       icon.classList.remove('hidden');
     }
   }
+
+  terapkanIkonTab(logo);
+}
+
+/* Ikon tab mengikuti logo yang dipilih di Pengaturan.
+
+   <link rel="icon"> hanya dibaca peramban saat halaman dimuat dan saat
+   nilainya diganti, jadi cukup menunjuk elemen yang sudah ada itu ke data URL
+   logonya. Kalau belum ada logo, berkas /favicon.svg bawaan yang dipakai —
+   lebih baik daripada blok kosong, karena peramban akan meminta /favicon.ico
+   dan menampilkan lambang generiknya sendiri kalau tautannya dilepas. */
+function terapkanIkonTab(logo) {
+  var link = document.querySelector('link[rel="icon"]');
+  if (!link) return;
+  link.setAttribute('href', logo || '/favicon.svg');
+  var apple = document.querySelector('link[rel="apple-touch-icon"]');
+  if (apple) apple.setAttribute('href', logo || '/favicon.svg');
 }
 
 function bacaLogoBerkas(file, cb) {

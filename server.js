@@ -1083,6 +1083,13 @@ function checkConfig(req, res, next) {
 // API ENDPOINTS
 // ============================================================
 
+// Permintaan /favicon.ico terjadi otomatis di hampir setiap peramban, terlepas
+// dari isi <link rel="icon">. Tanpa ini jawabannya 404 dan log terisi baris
+// yang tidak berguna; berkas SVG yang sama dikirim sebagai balasannya.
+app.get('/favicon.ico', (req, res) => {
+  res.type('image/svg+xml').sendFile(path.join(__dirname, 'public', 'favicon.svg'));
+});
+
 // --- Health Check (for Railway) ---
 app.get('/health', (req, res) => {
   // Always 200: this is Railway's deploy gate, and a revoked Telegram session
