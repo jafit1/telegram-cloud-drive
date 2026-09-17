@@ -32,6 +32,9 @@ var state = {
   uploads: [],
   contextFile: null,
   logs: [],
+  tempmailAddress: null,
+  tempmailMessages: [],
+  tempmailPoll: null,
 };
 
 /* ─────────────────────────────────────────────────────────────
@@ -459,6 +462,13 @@ function applyFilters() {
     showLogsView();
     return;
   }
+  // A file refresh can land while the operator is looking at another panel
+  // (the upload flow reloads the list on completion). Re-rendering the grid
+  // then would yank the panel away, so leave whichever one is showing alone.
+  if (state.activeCategory === 'tempmail') {
+    showTempmailView();
+    return;
+  }
   if (state.activeCategory !== 'all') {
     files = files.filter(function (f) { return getFileCategory(f) === state.activeCategory; });
   }
@@ -506,8 +516,10 @@ function renderFiles() {
   var container = $('files-container');
   var empty = $('empty-state');
   var logsContainer = $('logs-container');
+  var tempmailContainer = $('tempmail-container');
 
   logsContainer.classList.add('hidden');
+  if (tempmailContainer) tempmailContainer.classList.add('hidden');
   container.classList.remove('hidden');
   container.innerHTML = '';
   container.className = state.layout === 'grid'
@@ -1319,6 +1331,7 @@ function handleSync() {
 function showLogsView() {
   $('files-container').classList.add('hidden');
   $('empty-state').classList.add('hidden');
+  var tm = $('tempmail-container'); if (tm) tm.classList.add('hidden');
   $('logs-container').classList.remove('hidden');
 
   var tbody = $('logs-tbody');
@@ -1353,6 +1366,120 @@ function loadLogs() {
       if (state.activeCategory === 'logs') showLogsView();
     })
     .catch(function () {});
+}
+
+/* ─────────────────────────────────────────────────────────────
+   TEMP MAIL
+   ───────────────────────────────────────────────────────────── */
+function showTempmailView() {
+  $('files-container').classList.add('hidden');
+  $('empty-state').classList.add('hidden');
+  $('logs-container').classList.add('hidden');
+  $('tempmail-container').classList.remove('hidden');
+  renderTempmail();
+}
+
+function renderTempmail() {
+  var addrEl = $('tempmail-address');
+  addrEl.textContent = state.tempmailAddress || 'Belum ada alamat';
+
+  var tbody = $('tempmail-tbody');
+  tbody.innerHTML = '';
+  var msgs = state.tempmailMessages;
+  if (!msgs.length) {
+    tbody.innerHTML = '<tr><td colspan="3" class="p-8 text-center text-textGray text-xs">' +
+      (state.tempmailAddress ? 'Kotak masuk masih kosong. Pesan masuk akan muncul di sini.' : 'Buat alamat dulu untuk mulai menerima pesan.') +
+      '</td></tr>';
+    return;
+  }
+  msgs.forEach(function (m) {
+    var tr = document.createElement('tr');
+    tr.className = 'hover:bg-paper transition cursor-pointer';
+    tr.innerHTML =
+      '<td class="p-3 font-medium">' + escapeHtml(m.fromName || m.from || '-') + '</td>' +
+      '<td class="p-3 text-textGray truncate max-w-xs">' + escapeHtml(m.subject) + '</td>' +
+      '<td class="p-3 font-mono text-textGray whitespace-nowrap">' + formatDate(m.createdAt) + '</td>';
+    tr.addEventListener('click', function () { openTempmailMessage(m.id); });
+    tbody.appendChild(tr);
+  });
+}
+
+function loadTempmail() {
+  api('/api/tempmail/address')
+    .then(function (d) {
+      state.tempmailAddress = d.address || null;
+      renderTempmail();
+      if (d.address) return api('/api/tempmail/inbox').then(function (i) {
+        state.tempmailMessages = i.messages || [];
+        renderTempmail();
+      });
+      state.tempmailMessages = [];
+    })
+    .catch(function (err) {
+      if (err.message !== 'Unauthorized') showToast('Gagal memuat temp mail: ' + (err.message || ''), 'error');
+    });
+}
+
+function createTempmailAddress() {
+  $('btn-tempmail-new').disabled = true;
+  api('/api/tempmail/address', { method: 'POST' })
+    .then(function (d) {
+      state.tempmailAddress = d.address;
+      state.tempmailMessages = [];
+      showToast('Alamat baru dibuat: ' + d.address, 'success');
+      renderTempmail();
+    })
+    .catch(function (err) { showToast('Gagal membuat alamat: ' + (err.message || ''), 'error'); })
+    .finally(function () { $('btn-tempmail-new').disabled = false; });
+}
+
+function deleteTempmailAddress() {
+  if (!state.tempmailAddress) return;
+  showConfirm('Hapus alamat temp mail ini beserta semua isinya?', function () {
+    api('/api/tempmail/address', { method: 'DELETE' })
+      .then(function () {
+        state.tempmailAddress = null;
+        state.tempmailMessages = [];
+        showToast('Alamat dihapus.', 'success');
+        renderTempmail();
+      })
+      .catch(function (err) { showToast('Gagal menghapus: ' + (err.message || ''), 'error'); });
+  }, 'Hapus Alamat');
+}
+
+function copyTempmailAddress() {
+  if (!state.tempmailAddress) { showToast('Belum ada alamat untuk disalin.', 'error'); return; }
+  navigator.clipboard.writeText(state.tempmailAddress)
+    .then(function () { showToast('Alamat disalin.', 'success'); })
+    .catch(function () { showToast('Gagal menyalin.', 'error'); });
+}
+
+function openTempmailMessage(id) {
+  api('/api/tempmail/message/' + id)
+    .then(function (m) {
+      $('tempmail-reader-subject').textContent = m.subject || '(tanpa subjek)';
+      var bodyEl = $('tempmail-reader-body');
+      // text wins for readability; fall back to stripped html so markup never
+      // reaches the DOM as nodes — this is an inbox, not a renderer.
+      var shown = m.text || (m.html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      bodyEl.textContent = shown || '(pesan kosong)';
+      $('tempmail-reader').classList.remove('hidden');
+    })
+    .catch(function (err) { showToast('Gagal membaca pesan: ' + (err.message || ''), 'error'); });
+}
+
+function startTempmailPolling() {
+  stopTempmailPolling();
+  state.tempmailPoll = setInterval(function () {
+    if (state.activeCategory !== 'tempmail' || !state.tempmailAddress) return;
+    api('/api/tempmail/inbox')
+      .then(function (i) { state.tempmailMessages = i.messages || []; renderTempmail(); })
+      .catch(function () {});
+  }, 15000);
+}
+
+function stopTempmailPolling() {
+  if (state.tempmailPoll) { clearInterval(state.tempmailPoll); state.tempmailPoll = null; }
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -1676,8 +1803,14 @@ function setCategory(category) {
   });
 
   if (category === 'logs') {
+    stopTempmailPolling();
     loadLogs();
+  } else if (category === 'tempmail') {
+    showTempmailView();
+    loadTempmail();
+    startTempmailPolling();
   } else {
+    stopTempmailPolling();
     applyFilters();
   }
 
@@ -1689,6 +1822,7 @@ function setCategory(category) {
     document: 'Dokumen',
     folder: 'Folder',
     logs: 'Log Sistem',
+    tempmail: 'Temp Mail',
   };
   var titleEl = $('ws-title');
   if (titleEl) titleEl.textContent = titles[category] || 'Drive Saya';
@@ -1740,6 +1874,7 @@ function bindEvents() {
   if (refreshBtn) {
     refreshBtn.addEventListener('click', function () {
       if (state.activeCategory === 'logs') loadLogs();
+      else if (state.activeCategory === 'tempmail') loadTempmail();
       else loadFiles();
     });
   }
@@ -1788,6 +1923,15 @@ function bindEvents() {
 
   // Sync
   $('btn-sync').addEventListener('click', handleSync);
+
+  // Temp mail
+  $('btn-tempmail-copy').addEventListener('click', copyTempmailAddress);
+  $('btn-tempmail-refresh').addEventListener('click', loadTempmail);
+  $('btn-tempmail-new').addEventListener('click', createTempmailAddress);
+  $('btn-tempmail-delete').addEventListener('click', deleteTempmailAddress);
+  $('btn-tempmail-close-reader').addEventListener('click', function () {
+    $('tempmail-reader').classList.add('hidden');
+  });
 
   // Layout
   $('btn-layout').addEventListener('click', toggleLayout);

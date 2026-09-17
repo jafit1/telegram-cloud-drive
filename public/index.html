@@ -234,6 +234,10 @@
             <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
             <span>Log Sistem</span>
           </button>
+          <button class="nav-btn" data-category="tempmail">
+            <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+            <span>Temp Mail</span>
+          </button>
         </nav>
 
         <!-- Storage Widget -->
@@ -400,6 +404,46 @@
                   </thead>
                   <tbody id="logs-tbody" class="divide-y divide-cloud"></tbody>
                 </table>
+              </div>
+            </div>
+
+            <!-- Temp Mail Container -->
+            <div id="tempmail-container" class="hidden flex flex-col gap-3">
+              <div class="card p-4 flex flex-col sm:flex-row items-start sm:items-center gap-3">
+                <div class="flex-1 min-w-0">
+                  <p class="text-[10px] font-mono font-semibold text-textGray uppercase tracking-wider mb-1">Alamat Sementara</p>
+                  <p id="tempmail-address" class="text-sm font-mono font-semibold text-textDark truncate select-all">Belum ada alamat</p>
+                </div>
+                <div class="flex gap-2 shrink-0">
+                  <button id="btn-tempmail-copy" class="btn-ghost text-[11px] font-bold uppercase tracking-wider">Salin</button>
+                  <button id="btn-tempmail-refresh" class="btn-ghost text-[11px] font-bold uppercase tracking-wider">Muat Ulang</button>
+                  <button id="btn-tempmail-new" class="btn-primary text-[11px] font-bold uppercase tracking-wider">Alamat Baru</button>
+                  <button id="btn-tempmail-delete" class="btn-ghost text-[11px] font-bold uppercase tracking-wider" style="color:rgb(var(--c-danger))">Hapus</button>
+                </div>
+              </div>
+              <p class="text-[11px] text-textGray leading-relaxed px-1">Kotak masuk sekali pakai untuk verifikasi Anda sendiri. Alamat kedaluwarsa otomatis; jangan dipakai untuk mendaftar massal di situs orang lain.</p>
+              <div id="tempmail-inbox" class="border border-cloud rounded-control overflow-hidden">
+                <div class="overflow-x-auto">
+                  <table class="w-full text-left text-xs" style="border-collapse:collapse;min-width:560px">
+                    <thead>
+                      <tr class="bg-paper border-b border-cloud text-textGray font-mono">
+                        <th class="p-3">Dari</th>
+                        <th class="p-3">Subjek</th>
+                        <th class="p-3">Waktu</th>
+                      </tr>
+                    </thead>
+                    <tbody id="tempmail-tbody" class="divide-y divide-cloud"></tbody>
+                  </table>
+                </div>
+              </div>
+              <div id="tempmail-reader" class="card p-4 hidden">
+                <div class="flex items-center justify-between gap-3 mb-3">
+                  <h3 id="tempmail-reader-subject" class="text-sm font-semibold text-textDark truncate"></h3>
+                  <button id="btn-tempmail-close-reader" class="btn-icon shrink-0" aria-label="Tutup pesan">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                  </button>
+                </div>
+                <div id="tempmail-reader-body" class="text-xs text-textDark leading-relaxed whitespace-pre-wrap break-words max-h-96 overflow-y-auto custom-scrollbar"></div>
               </div>
             </div>
           </div>

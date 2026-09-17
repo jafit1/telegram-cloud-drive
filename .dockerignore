@@ -1,0 +1,26 @@
+node_modules
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+
+# State lokal & rahasia — TIDAK boleh masuk image. Dipasok lewat volume + secrets.
+data/
+config.json
+metadata.db*
+gramjs-localstorage.json*
+tempmail.json
+*.log
+*.bak
+
+# Berkas besar / tidak perlu di runtime
+temp/
+uploads/
+cache/
+thumbs/
+test/
+deploy/
+Claude outputs/
+*.md
+.gitkeep

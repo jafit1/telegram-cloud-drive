@@ -21,6 +21,9 @@ const auth = require('./auth');
 // own module so it can be unit-tested without standing up a server or a
 // Telegram client — see the header there for why photos used to be skipped.
 const { describeSyncMedia, floodWaitSeconds } = require('./sync-media');
+// Throwaway mailbox (mail.tm). Own module for the same reason as sync-media:
+// the shaping is pure and unit-testable without standing up a server.
+const tempmail = require('./tempmail');
 
 // Try to load Sharp for image compression
 let sharp = null;
@@ -1043,6 +1046,68 @@ app.post('/api/settings/reset-credentials', async (req, res) => {
   } catch (err) {
     console.error('Credential reset failed:', err);
     res.status(500).json({ error: 'Gagal mereset kredensial: ' + err.message });
+  }
+});
+
+// 3e. Temp mail — a throwaway mailbox for the operator of this drive.
+//
+// All five routes sit behind the password gate (registered after line 68), so a
+// stranger cannot spend this instance's mailbox or read what arrives in it.
+// None of them take `checkConfig`: the mailbox has nothing to do with the
+// Telegram session, and making it depend on one would break the feature exactly
+// when someone is still in the middle of setting up.
+//
+// Scope stops at an inbox. Nothing here submits a form on a third-party site or
+// registers accounts in bulk — see the header of ./tempmail for why.
+app.get('/api/tempmail/address', async (req, res) => {
+  try {
+    res.json({ address: (await tempmail.current())?.address || null });
+  } catch (err) {
+    console.error('Temp mail address failed:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/tempmail/address', async (req, res) => {
+  try {
+    const out = await tempmail.create();
+    db.logActivity('TempMail', 'Alamat temp mail baru dibuat: ' + out.address);
+    res.json(out);
+  } catch (err) {
+    console.error('Temp mail create failed:', err);
+    res.status(502).json({ error: err.message });
+  }
+});
+
+app.get('/api/tempmail/inbox', async (req, res) => {
+  try {
+    res.json({ messages: await tempmail.inbox() });
+  } catch (err) {
+    console.error('Temp mail inbox failed:', err);
+    res.status(502).json({ error: err.message });
+  }
+});
+
+app.get('/api/tempmail/message/:id', async (req, res) => {
+  try {
+    res.json(await tempmail.message(req.params.id));
+  } catch (err) {
+    const status = err.status || 502;
+    if (status >= 500) console.error('Temp mail message failed:', err);
+    res.status(status).json({ error: err.message });
+  }
+});
+
+app.delete('/api/tempmail/address', async (req, res) => {
+  try {
+    const out = await tempmail.destroy();
+    db.logActivity('TempMail', out.remoteDeleted
+      ? 'Alamat temp mail dihapus.'
+      : 'Alamat temp mail dibuang lokal; penghapusan di mail.tm gagal.');
+    res.json(out);
+  } catch (err) {
+    console.error('Temp mail delete failed:', err);
+    res.status(502).json({ error: err.message });
   }
 });
 
