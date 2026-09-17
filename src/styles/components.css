@@ -427,6 +427,29 @@
   border-radius: 999px;
 }
 
+/* Dropdown versi ringkas: dipakai di bar pencarian, tempat label teks
+   ("Urutkan", "Ukuran") memakan lebar tanpa menambah kejelasan — ikon
+   bersama nilainya sudah menjelaskan. */
+.custom-dropdown.compact .custom-dropdown-trigger {
+  height: 36px;
+  padding-inline: .6rem;
+  gap: .4rem;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+.custom-dropdown.compact .custom-dropdown-label {
+  max-width: 7.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.custom-dropdown.compact .dd-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  opacity: .65;
+}
+
 /* ─────────────────────────────────────────────────────────────
    CUSTOM DROPDOWN
    ───────────────────────────────────────────────────────────── */

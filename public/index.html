@@ -287,15 +287,53 @@
           </div>
         </div>
 
-        <!-- Top Action Bar -->
-        <header class="card p-3 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
-          <div class="relative w-full sm:w-80">
+        <!-- Top Action Bar: pencarian + saringan dalam satu baris supaya ruang
+             vertikalnya untuk daftar berkas, bukan untuk kontrol. -->
+        <header class="card px-3 py-2 flex flex-wrap items-center gap-2 shrink-0">
+          <div class="relative flex-1 min-w-[160px]">
             <input type="search" id="search-input" placeholder="Telusuri berkas..." class="input pl-9 pr-8 py-2">
             <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-textGray/60 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
             <button class="absolute right-3 top-1/2 -translate-y-1/2 text-textGray font-semibold hidden hover:text-primary text-sm leading-none" id="search-clear" aria-label="Bersihkan pencarian">&times;</button>
           </div>
 
-          <div class="flex items-center gap-2 w-full sm:w-auto overflow-x-auto custom-scrollbar pb-1 sm:mb-0">
+          <!-- Saringan ringkas: label dihilangkan, ikon + nilai sudah menjelaskan -->
+          <div class="custom-dropdown compact" id="dd-sort" data-value="newest" title="Urutkan">
+            <button class="custom-dropdown-trigger" type="button" aria-haspopup="listbox" aria-expanded="false">
+              <svg class="dd-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M6 12h12M10 18h4"/></svg>
+              <span class="custom-dropdown-label">Terbaru</span>
+              <svg class="custom-dropdown-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <div class="custom-dropdown-menu" role="listbox">
+              <div class="custom-dropdown-item" role="option" data-value="newest">Terbaru</div>
+              <div class="custom-dropdown-item" role="option" data-value="oldest">Terlama</div>
+              <div class="custom-dropdown-item" role="option" data-value="largest">Terbesar</div>
+              <div class="custom-dropdown-item" role="option" data-value="smallest">Terkecil</div>
+              <div class="custom-dropdown-item" role="option" data-value="name-asc">Nama A-Z</div>
+              <div class="custom-dropdown-item" role="option" data-value="name-desc">Nama Z-A</div>
+            </div>
+          </div>
+
+          <div class="custom-dropdown compact" id="dd-size" data-value="all" title="Ukuran">
+            <button class="custom-dropdown-trigger" type="button" aria-haspopup="listbox" aria-expanded="false">
+              <svg class="dd-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 3H3v18h18z"/><path d="M3 9h18M9 21V9"/></svg>
+              <span class="custom-dropdown-label">Semua</span>
+              <svg class="custom-dropdown-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <div class="custom-dropdown-menu" role="listbox">
+              <div class="custom-dropdown-item" role="option" data-value="all">Semua ukuran</div>
+              <div class="custom-dropdown-item" role="option" data-value="small">&lt; 10 MB</div>
+              <div class="custom-dropdown-item" role="option" data-value="medium">10-100 MB</div>
+              <div class="custom-dropdown-item" role="option" data-value="large">&gt; 100 MB</div>
+            </div>
+          </div>
+
+          <div class="relative shrink-0" style="width:130px" title="Saring ekstensi">
+            <input type="text" id="filter-extension" placeholder="pdf, zip, mp4" class="input py-2 text-xs font-mono" style="height:36px">
+          </div>
+
+          <span id="file-count-badge" class="stat-caption hidden lg:inline whitespace-nowrap">0 berkas</span>
+
+          <div class="flex items-center gap-2 ml-auto">
             <button id="btn-sync" class="btn-ghost text-[11px] font-bold uppercase tracking-wider whitespace-nowrap" title="Sync dari Channel Telegram" style="background:rgb(var(--c-success) / 0.08);border-color:rgb(var(--c-success) / 0.2);color:rgb(var(--c-success))">
               <svg class="w-4 h-4 sync-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
               <span class="sync-text">Sync</span>
@@ -314,53 +352,8 @@
           </div>
         </header>
 
-        <!-- Sub Toolbar (Filters) -->
-        <div class="card px-4 py-3 toolbar shrink-0">
-          <div class="toolbar-group">
-            <span class="toolbar-label">Urutkan</span>
-            <div class="custom-dropdown" id="dd-sort" data-value="newest">
-              <button class="custom-dropdown-trigger" type="button" aria-haspopup="listbox" aria-expanded="false">
-                <span class="custom-dropdown-label">Terbaru</span>
-                <svg class="custom-dropdown-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
-              </button>
-              <div class="custom-dropdown-menu" role="listbox">
-                <div class="custom-dropdown-item" role="option" data-value="newest">Terbaru</div>
-                <div class="custom-dropdown-item" role="option" data-value="oldest">Terlama</div>
-                <div class="custom-dropdown-item" role="option" data-value="largest">Terbesar</div>
-                <div class="custom-dropdown-item" role="option" data-value="smallest">Terkecil</div>
-                <div class="custom-dropdown-item" role="option" data-value="name-asc">Nama A-Z</div>
-                <div class="custom-dropdown-item" role="option" data-value="name-desc">Nama Z-A</div>
-              </div>
-            </div>
-          </div>
-          <div class="toolbar-divider hidden sm:block"></div>
-
-          <div class="toolbar-group">
-            <span class="toolbar-label">Ukuran</span>
-            <div class="custom-dropdown" id="dd-size" data-value="all">
-              <button class="custom-dropdown-trigger" type="button" aria-haspopup="listbox" aria-expanded="false">
-                <span class="custom-dropdown-label">Semua</span>
-                <svg class="custom-dropdown-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
-              </button>
-              <div class="custom-dropdown-menu" role="listbox">
-                <div class="custom-dropdown-item" role="option" data-value="all">Semua</div>
-                <div class="custom-dropdown-item" role="option" data-value="small">&lt; 10 MB</div>
-                <div class="custom-dropdown-item" role="option" data-value="medium">10-100 MB</div>
-                <div class="custom-dropdown-item" role="option" data-value="large">&gt; 100 MB</div>
-              </div>
-            </div>
-          </div>
-          <div class="toolbar-divider hidden sm:block"></div>
-
-          <div class="toolbar-group flex-1 min-w-[140px]">
-            <span class="toolbar-label">Ekstensi</span>
-            <input type="text" id="filter-extension" placeholder="pdf, zip, mp4" class="input py-1.5 text-xs font-mono" style="height:34px">
-          </div>
-
-          <div class="toolbar-group ml-auto">
-            <span id="file-count-badge" class="stat-caption">0 berkas</span>
-          </div>
-        </div>
+        <!-- Sub Toolbar (Filters) dihapus: saringannya sudah pindah ke baris
+             pencarian di atas, supaya daftar berkas dapat ruang lebih tinggi. -->
 
         <!-- File List Area -->
         <div class="card flex-1 relative overflow-hidden flex flex-col">
@@ -455,10 +448,13 @@
   <!-- ══════════════════════════════════════════════════════════
        ACTIVE UPLOADS PANEL
        ══════════════════════════════════════════════════════════ -->
-  <div id="upload-panel" class="fixed hidden flex flex-col overflow-hidden transition-all duration-300">
+  <div id="upload-panel" class="fixed hidden flex flex-col overflow-hidden up-hidden">
     <div class="bg-paper px-4 py-3 border-b border-cloud flex items-center justify-between" id="upload-panel-header">
       <div class="flex items-center gap-2 min-w-0">
-        <span class="w-2 h-2 rounded-full animate-ping shrink-0" id="upload-panel-ping" style="background-color:#ff5a00"></span>
+        <!-- Titik status: dulu animate-ping, yang berdenyut tanpa henti dan
+             justru terlihat seperti kedipan. Sekarang warna tetap + denyut
+             halus hanya pada opacity. -->
+        <span class="up-dot shrink-0" id="upload-panel-ping"></span>
         <span class="text-[11px] font-semibold tracking-wider uppercase text-textDark truncate" id="upload-panel-title">Unggah: 0 file</span>
       </div>
       <div class="flex items-center gap-1 shrink-0">
@@ -470,7 +466,6 @@
     </div>
     <div id="upload-items" class="p-3 overflow-y-auto custom-scrollbar flex-1 transition-all duration-300"></div>
   </div>
-
   <!-- ══════════════════════════════════════════════════════════
        SETTINGS MODAL
        ══════════════════════════════════════════════════════════ -->
@@ -654,10 +649,7 @@
        ══════════════════════════════════════════════════════════ -->
   <div id="bulk-bar" class="fixed bottom-6 left-1/2 -translate-x-1/2 px-4 sm:px-6 py-3 flex items-center justify-between gap-4 hidden">
     <div class="flex items-center gap-2.5 text-xs font-semibold text-textDark whitespace-nowrap">
-      <span class="flex h-2.5 w-2.5 relative">
-        <span class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" style="background-color:#ff5a00"></span>
-        <span class="relative inline-flex rounded-full h-2.5 w-2.5" style="background-color:#ff5a00"></span>
-      </span>
+      <span class="up-dot up-dot-idle"></span>
       <span><span id="bulk-count">0</span> DIPILIH</span>
     </div>
     <div class="flex items-center gap-2">

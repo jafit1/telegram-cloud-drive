@@ -70,12 +70,44 @@
   z-index: 40;
   overflow: hidden;
   max-height: 300px;
+  /* Muncul dan menghilang dengan geser+redup, bukan berkedip. Transisi pada
+     transform dan opacity saja supaya tidak memicu layout ulang di tengah
+     unggahan yang sedang berjalan. */
+  transition: opacity .22s ease, transform .22s ease;
+  will-change: opacity, transform;
+}
+#upload-panel.up-hidden {
+  opacity: 0;
+  transform: translateY(12px) scale(.98);
+  pointer-events: none;
 }
 .dark #upload-panel {
   border-top-color: rgb(var(--c-border-strong));
 }
 #upload-panel-header { cursor: pointer; user-select: none; }
 #upload-items { overflow-y: auto; }
+
+/* Titik status unggahan. Warna tetap, denyut halus pada opacity saja —
+   animate-ping yang lama berdenyut besar dan terbaca seperti kedipan. */
+.up-dot {
+  width: .5rem;
+  height: .5rem;
+  border-radius: 9999px;
+  background-color: #ff5a00;
+  box-shadow: 0 0 0 3px rgb(255 90 0 / .15);
+}
+.up-dot.up-dot-idle {
+  animation: up-dot-pulse 1.6s ease-in-out infinite;
+  background-color: rgb(var(--c-success));
+  box-shadow: 0 0 0 3px rgb(var(--c-success) / .15);
+}
+@keyframes up-dot-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: .45; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .up-dot.up-dot-idle { animation: none; }
+}
 
 @media (min-width: 640px) {
   #upload-panel { bottom: 1.5rem; right: 1.5rem; width: 20rem; }

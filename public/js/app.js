@@ -1183,42 +1183,110 @@ function handleFiles(fileList) {
   processUploadQueue();
 }
 
+/* Panel unggahan: muncul dan menghilang dengan geser+redup, bukan berkedip.
+
+   Dua hal yang dulu salah:
+   1. `hidden` dipakai untuk menyembunyikan, jadi elemennya lenyap seketika —
+      itulah kedipan yang terlihat setiap kali daftar unggahan disegarkan.
+   2. Tidak ada yang menutupnya setelah semua berkas selesai, sehingga panel
+      kosong menetap di layar sampai ditutup manual.
+
+   Sekarang visibilitasnya lewat kelas `up-hidden` (opacity + transform), dan
+   setelah antrean kosong panel menutup sendiri dengan jeda yang cukup untuk
+   membaca "Selesai". */
+var uploadPanelTimer = null;
+
 function showUploadPanel() {
-  $('upload-panel').classList.remove('hidden');
+  var panel = $('upload-panel');
+  if (!panel) return;
+  if (uploadPanelTimer) { clearTimeout(uploadPanelTimer); uploadPanelTimer = null; }
+  panel.classList.remove('hidden');
+  // Satu frame sebelum transisi dimulai, supaya browser sempat menghitung
+  // posisi awal; tanpa ini kelasnya dilepas dan transisinya tidak jalan.
+  requestAnimationFrame(function () {
+    requestAnimationFrame(function () { panel.classList.remove('up-hidden'); });
+  });
 }
 
-function hideUploadPanel() {
-  $('upload-panel').classList.add('hidden');
+function hideUploadPanel(segera) {
+  var panel = $('upload-panel');
+  if (!panel) return;
+  panel.classList.add('up-hidden');
+  if (uploadPanelTimer) clearTimeout(uploadPanelTimer);
+  if (segera === true) {
+    panel.classList.add('hidden');
+    return;
+  }
+  // `hidden` baru dipasang setelah transisinya selesai, jadi elemennya benar
+  // benar tidak ikut menerima klik selama animasi.
+  uploadPanelTimer = setTimeout(function () {
+    panel.classList.add('hidden');
+    uploadPanelTimer = null;
+  }, 240);
 }
 
+// Dipanggil setelah semua unggahan selesai: beri jeda singkat supaya status
+// terakhir sempat terbaca, lalu tutup.
+function jadwalkanTutupPanelUnggahan() {
+  if (uploadPanelTimer) clearTimeout(uploadPanelTimer);
+  uploadPanelTimer = setTimeout(function () {
+    uploadPanelTimer = null;
+    hideUploadPanel();
+  }, 2600);
+}
+
+/* Menyegarkan daftar unggahan tanpa membangun ulang seluruh isinya.
+
+   Versi lama mengosongkan `container.innerHTML` lalu membuat semuanya lagi.
+   Setiap panggilan berarti setiap baris hilang lalu muncul kembali dalam satu
+   frame — dan karena fungsi ini dipanggil tiap kali progres berubah, panelnya
+   terlihat berkedip sepanjang unggahan. Sekarang barisnya dipakai ulang kalau
+   sudah ada, dan hanya yang benar-benar berubah yang ditulis. */
 function renderUploadItems() {
   var container = $('upload-items');
-  container.innerHTML = '';
+  if (!container) return;
 
   var active = state.uploads.filter(function (u) { return u.status === 'pending' || u.status === 'uploading'; });
-  $('upload-panel-title').textContent = 'Unggah: ' + (active.length || state.uploads.length) + ' file';
+  var titleEl = $('upload-panel-title');
+  if (titleEl) titleEl.textContent = 'Unggah: ' + (active.length || state.uploads.length) + ' file';
+
+  var pingEl = $('upload-panel-ping');
+  if (pingEl) pingEl.classList.toggle('up-dot-idle', active.length > 0);
 
   if (state.uploads.length === 0) {
-    container.innerHTML = '<p class="text-center text-textGray text-xs py-4">Tidak ada unggahan aktif</p>';
+    if (!container.querySelector('.up-empty')) {
+      container.innerHTML = '<p class="up-empty text-center text-textGray text-xs py-4">Tidak ada unggahan aktif</p>';
+    }
     return;
   }
 
-  state.uploads.slice().reverse().forEach(function (up) {
-    var div = document.createElement('div');
-    div.className = 'up-item';
-    div.id = 'up-' + up.id;
+  var kosong = container.querySelector('.up-empty');
+  if (kosong) kosong.remove();
 
-    var statusText = up.status === 'done' ? 'Selesai' : up.status === 'error' ? (up.error ? 'Gagal: ' + up.error : 'Gagal') : up.status === 'uploading' ? formatBytes(up.progress * up.size) + ' / ' + formatBytes(up.size) : 'Menunggu...';
-    var fillColor = up.status === 'error' ? 'rgb(var(--c-danger))' : up.status === 'done' ? 'rgb(var(--c-success))' : 'rgb(var(--c-accent))';
+  var urut = state.uploads.slice().reverse();
 
-    div.innerHTML =
-      '<div class="up-row">' +
-      '<span class="up-name">' + escapeHtml(up.name) + '</span>' +
-      '<span class="up-status">' + statusText + '</span>' +
-      '</div>' +
-      '<div class="up-bar"><div class="up-fill" style="width:' + (up.progress * 100) + '%;background-color:' + fillColor + '"></div></div>';
+  /* Baris yang tidak lagi ada di daftar dibuang, sisanya dipakai ulang. */
+  var idDiinginkan = {};
+  urut.forEach(function (u) { idDiinginkan['up-' + u.id] = true; });
+  Array.prototype.slice.call(container.children).forEach(function (child) {
+    if (child.id && !idDiinginkan[child.id]) child.remove();
+  });
 
-    container.appendChild(div);
+  urut.forEach(function (up) {
+    var div = $('up-' + up.id);
+    if (!div) {
+      div = document.createElement('div');
+      div.className = 'up-item';
+      div.id = 'up-' + up.id;
+      div.innerHTML =
+        '<div class="up-row">' +
+        '<span class="up-name"></span>' +
+        '<span class="up-status"></span>' +
+        '</div>' +
+        '<div class="up-bar"><div class="up-fill"></div></div>';
+      container.appendChild(div);
+    }
+    updateUploadItem(up);
   });
 }
 
@@ -1228,12 +1296,22 @@ function updateUploadItem(up) {
   var statusText = up.status === 'done' ? 'Selesai' : up.status === 'error' ? (up.error ? 'Gagal: ' + up.error : 'Gagal') : up.status === 'uploading' ? formatBytes(up.progress * up.size) + ' / ' + formatBytes(up.size) : 'Menunggu...';
   var fillColor = up.status === 'error' ? 'rgb(var(--c-danger))' : up.status === 'done' ? 'rgb(var(--c-success))' : 'rgb(var(--c-accent))';
 
+  var nameEl = div.querySelector('.up-name');
+  if (nameEl && nameEl.textContent !== up.name) {
+    nameEl.textContent = up.name;
+    nameEl.title = up.name;
+  }
+
+  // Hanya tulis bila nilainya benar-benar berubah: menulis ulang textContent
+  // dengan isi yang sama tetap memicu kerja render dan ikut menyumbang kedipan.
   var statusEl = div.querySelector('.up-status');
+  if (statusEl && statusEl.textContent !== statusText) statusEl.textContent = statusText;
+
   var fillEl = div.querySelector('.up-fill');
-  if (statusEl) statusEl.textContent = statusText;
   if (fillEl) {
-    fillEl.style.width = (up.progress * 100) + '%';
-    fillEl.style.backgroundColor = fillColor;
+    var lebar = (up.progress * 100) + '%';
+    if (fillEl.style.width !== lebar) fillEl.style.width = lebar;
+    if (fillEl.style.backgroundColor !== fillColor) fillEl.style.backgroundColor = fillColor;
   }
 }
 
@@ -1243,7 +1321,11 @@ function processUploadQueue() {
   var next = state.uploads.find(function (u) { return u.status === 'pending'; });
   if (!next) {
     uploadInProgress = false;
+    // Semua berkas sudah diproses: segarkan daftar, lalu biarkan panel menutup
+    // sendiri sebentar kemudian.
+    var masihAdaYangGagal = state.uploads.some(function (u) { return u.status === 'error'; });
     loadFiles();
+    if (!masihAdaYangGagal) jadwalkanTutupPanelUnggahan();
     return;
   }
 
@@ -1925,7 +2007,7 @@ function bindEvents() {
   $('folder-input').addEventListener('change', function (e) { handleFiles(e.target.files); e.target.value = ''; });
 
   // Upload panel
-  $('upload-panel-close').addEventListener('click', hideUploadPanel);
+  $('upload-panel-close').addEventListener('click', function () { hideUploadPanel(); });
   var panelCollapsed = false;
   $('upload-panel-toggle').addEventListener('click', function () {
     panelCollapsed = !panelCollapsed;
