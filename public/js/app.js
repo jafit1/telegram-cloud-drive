@@ -1942,29 +1942,11 @@ function setupDragDrop() {
 /* ─────────────────────────────────────────────────────────────
    CONNECTION STATUS
    ───────────────────────────────────────────────────────────── */
+/* Status sambungan tidak lagi punya indikator di sidebar. Yang tersisa hanya
+   banner sesi di dalam area berkas, dan itu muncul sendiri saat ada yang perlu
+   ditindak — jadi tidak ada elemen untuk disegarkan di sini. */
 function updateConnectionStatus(status) {
   state.connectionState = status;
-  var wrap = $('conn-dot');
-  var dot = document.querySelector('#conn-dot .conn-dot');
-  var text = $('conn-text');
-  if (!dot) return;
-
-  var colors = {
-    connected: 'rgb(var(--c-success))',
-    connecting: 'rgb(var(--c-warning))',
-    disconnected: 'rgb(var(--c-danger))',
-  };
-  var labels = {
-    connected: 'TERHUBUNG',
-    connecting: 'MENGHUBUNGKAN...',
-    disconnected: 'TERPUTUS',
-  };
-
-  dot.style.backgroundColor = colors[status] || colors.disconnected;
-  // Titiknya hijau saat tersambung; cincin luarnya jadi merah saat tidak, dan
-  // tidak ada animasi di keduanya.
-  if (wrap) wrap.classList.toggle('conn-off', status !== 'connected');
-  if (text) text.textContent = labels[status] || labels.disconnected;
 }
 
 function checkConnection() {

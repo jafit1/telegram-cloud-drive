@@ -201,13 +201,9 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
 
-        <!-- Connection Status: satu titik hijau. Teks "TERHUBUNG" dihapus karena
-             titiknya sendiri sudah berarti itu, dan kedipannya hanya menarik
-             mata ke hal yang tidak pernah berubah. -->
-        <div class="flex items-center justify-center gap-2 bg-paper border border-cloud px-3 py-1.5 rounded-control shrink-0" id="conn-dot">
-          <span class="conn-dot" style="background-color:rgb(var(--c-success))" title="Terhubung"></span>
-          <span class="text-[10px] font-mono font-semibold tracking-wider text-textGray" id="conn-text">TERHUBUNG</span>
-        </div>
+        <!-- Indikator status sambungan dihapus: keadaan ini ditangani banner
+             sesi sendiri (muncul hanya saat perlu ditindak), jadi titik yang
+             selalu ada hanya menambah satu baris tanpa memberi kabar baru. -->
 
         <div class="border-t border-cloud shrink-0"></div>
 
