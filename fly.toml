@@ -8,6 +8,11 @@ primary_region = 'sin'
   DATA_DIR = '/data'
   PORT = '3000'
   NODE_ENV = 'production'
+  # Media (cache/thumbnail/upload) tidak disimpan di volume — hanya di /tmp.
+  # Isi berkas selalu diambil ulang dari Telegram.
+  EPHEMERAL_CACHE = '1'
+  CACHE_MAX_BYTES = '268435456'
+  CACHE_MAX_AGE_MS = '3600000'
 
 [http_service]
   internal_port = 3000
@@ -31,10 +36,10 @@ primary_region = 'sin'
   path = '/health'
 
 [[mounts]]
-  source = 'drive_data'
+  source = 'drive_data_small'
   destination = '/data'
 
 [[vm]]
   size = 'shared-cpu-1x'
   cpus = 1
-  memory = '1024mb'
+  memory = '256mb'

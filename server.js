@@ -74,11 +74,21 @@ app.get('/api/settings/status', (req, res) => {
 // ── Gate: every other /api/* route requires a valid session ──
 app.use('/api', auth.requireAuth);
 
-// Directories — all under dataDir for Railway volume persistence
-const tempDir = path.join(dataDir, 'temp');
-const cacheDir = path.join(dataDir, 'cache');
-const thumbDir = path.join(dataDir, 'thumbs');
-const uploadDir = path.join(dataDir, 'uploads');
+// Directories — media Turunan (cache, thumbnail, upload, temp) bisa dipisah
+// dari volume lewat EPHEMERAL_CACHE=1. Kalau aktif, semuanya pindah ke /tmp
+// (hilang saat restart, tidak menumpuk di disk). Yang tetap di volume hanya
+// data kecil: config.json (sesi Telegram), metadata.db (SQLite), dan
+// gramjs-localstorage.json. Isi berkas selalu diambil ulang dari Telegram.
+const ephemeralBase = (() => {
+  if (process.env.EPHEMERAL_CACHE !== '1') return null;
+  const dir = path.join(require('os').tmpdir(), 'drive-ephemeral');
+  console.log(`Ephemeral cache aktif: media tidak disimpan di volume (${dir})`);
+  return dir;
+})();
+const tempDir = path.join(ephemeralBase || dataDir, 'temp');
+const cacheDir = path.join(ephemeralBase || dataDir, 'cache');
+const thumbDir = path.join(ephemeralBase || dataDir, 'thumbs');
+const uploadDir = path.join(ephemeralBase || dataDir, 'uploads');
 [tempDir, cacheDir, thumbDir, uploadDir].forEach(d => { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); });
 
 // Multer
